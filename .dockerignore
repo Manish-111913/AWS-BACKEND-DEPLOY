@@ -1,0 +1,90 @@
+# Node modules (will be installed in container)
+node_modules/
+npm-debug.log*
+
+# Environment files (use Lambda env vars instead)
+.env
+.env.*
+!.env.lambda
+
+# Git files
+.git
+.gitignore
+
+# Documentation
+*.md
+README*
+CHANGELOG*
+
+# Development and testing files
+testing_tools/
+tests/
+**/*.test.js
+**/*.spec.js
+
+# Debug and utility scripts
+check-*.js
+test-*.js
+debug-*.js
+fix-*.js
+verify-*.js
+investigate-*.js
+quick-*.js
+final-*.js
+demo-*.js
+cleanup-*.js
+setup-*.js
+run-*.js
+
+# Platform-specific scripts
+*.ps1
+*.sh
+*.bat
+
+# Cache directories
+.wwebjs_cache/
+__pycache__/
+*.pyc
+.serverless/
+
+# Upload directories (large files)
+uploads/ocr/
+uploads/temp/
+uploads/sales-reports/
+uploads/purchase_orders/
+
+# Build artifacts
+dist/
+build/
+coverage/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Database files
+*.sqlite
+*.db
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Configuration files that shouldn't be in container
+samconfig.toml
+docker-compose.yml
+Dockerfile*
+.dockerignore
+
+# Serverless files
+.serverless/

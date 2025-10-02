@@ -2,11 +2,15 @@ service: qrbilling-backend
 
 provider:
   name: aws
-  runtime: nodejs18.x
   region: ap-south-1  # Mumbai, India
   stage: ${opt:stage, 'dev'}
   memorySize: 512
   timeout: 30
+  ecr:
+    images:
+      qrbilling-backend:
+        path: ./
+        file: Dockerfile
   
   # Environment variables for Lambda
   environment:
@@ -46,10 +50,19 @@ provider:
           Action:
             - secretsmanager:GetSecretValue
           Resource: 'arn:aws:secretsmanager:*:*:secret:qrbilling/*'
+        - Effect: Allow
+          Action:
+            - ecr:GetAuthorizationToken
+            - ecr:BatchCheckLayerAvailability
+            - ecr:GetDownloadUrlForLayer
+            - ecr:BatchGetImage
+          Resource: '*'
 
 functions:
   api:
-    handler: server.handler
+    image:
+      name: qrbilling-backend
+      uri: ${aws:accountId}.dkr.ecr.${aws:region}.amazonaws.com/qrbilling-backend:latest
     events:
       - http:
           path: /{proxy+}
