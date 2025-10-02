@@ -1,0 +1,783 @@
+const { pool } = require('../config/database');
+
+// Runtime load signature to verify the currently running code version (helps detect stale processes)
+const MINIMAL_STOCK_SERVICE_VERSION = 'MinimalStockService v2025-09-18 inline-usage-no-stable-columns';
+console.log(`🆗 Loaded ${MINIMAL_STOCK_SERVICE_VERSION}`);
+
+/**
+ * MinimalStockService - Comprehensive service for managing the 3-phase minimal stock system
+ * 
+ * Phase 1: Learning Mode (Days 1-7) - Silent data collection
+ * Phase 2: Preliminary Automation (After Day 7) - Basic consumption-based alerts
+ * Phase 3: Full Automation (After Day 14) - Advanced predictive reordering
+ */
+class MinimalStockService {
+  // Expose version for diagnostic endpoints if needed
+  static getVersion() {
+    return MINIMAL_STOCK_SERVICE_VERSION;
+  }
+  
+  // =================== PHASE MANAGEMENT ===================
+  
+  /**
+   * Initialize tracking for a new inventory item when first added via Stock In OCR
+   * @param {number} itemId - Inventory item ID
+   * @param {number} businessId - Business ID
+   */
+  static async initializeItemTracking(itemId, businessId) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      // Check if item tracking already exists
+      const existingTracking = await client.query(`
+        SELECT tracking_id FROM MinimalStockTracking 
+        WHERE item_id = $1 AND business_id = $2
+      `, [itemId, businessId]);
+      
+      if (existingTracking.rows.length === 0) {
+        // Initialize new item tracking with Phase 1 status
+        await client.query(`
+          INSERT INTO MinimalStockTracking (
+            item_id, business_id, tracking_phase, data_collection_start_date,
+            is_learning_mode, total_consumption_recorded, total_usage_days
+          ) VALUES ($1, $2, 1, CURRENT_DATE, true, 0, 0)
+        `, [itemId, businessId]);
+        
+        console.log(`🎯 Phase 1 Learning Mode initiated for item ${itemId}`);
+        return { phase: 1, status: 'learning_mode_started' };
+      }
+      
+      await client.query('COMMIT');
+      return { phase: 'existing', status: 'already_tracked' };
+      
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  
+  /**
+   * Record item usage from Stock Out module during any phase
+   * @param {number} itemId - Inventory item ID
+   * @param {number} businessId - Business ID
+   * @param {number} quantity - Amount used/wasted
+   * @param {string} usageType - 'usage', 'wastage', 'production'
+   */
+  static async recordItemUsage(itemId, businessId, quantity, usageType = 'usage') {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      // Get current tracking status
+      const trackingResult = await client.query(`
+        SELECT * FROM MinimalStockTracking 
+        WHERE item_id = $1 AND business_id = $2
+      `, [itemId, businessId]);
+      
+      let trackingPhase = 1;
+      if (trackingResult.rows.length === 0) {
+        // Initialize tracking if doesn't exist
+        await this.initializeItemTracking(itemId, businessId);
+      } else {
+        trackingPhase = trackingResult.rows[0].tracking_phase;
+      }
+      
+      // Record the usage event
+      await client.query(`
+        INSERT INTO ItemUsageHistory (
+          item_id, business_id, usage_date, quantity_used, usage_type,
+          tracking_phase, recorded_at
+        ) VALUES ($1, $2, CURRENT_DATE, $3, $4, $5, NOW())
+      `, [itemId, businessId, quantity, usageType, trackingPhase]);
+      
+      // Update tracking statistics
+      await client.query(`
+        UPDATE MinimalStockTracking 
+        SET 
+          total_consumption_recorded = total_consumption_recorded + $3,
+          total_usage_days = (
+            SELECT COUNT(DISTINCT usage_date) 
+            FROM ItemUsageHistory 
+            WHERE item_id = $1 AND business_id = $2
+          ),
+          last_usage_recorded = NOW(),
+          updated_at = NOW()
+        WHERE item_id = $1 AND business_id = $2
+      `, [itemId, businessId, quantity]);
+      
+      await client.query('COMMIT');
+      
+      console.log(`📊 Usage recorded: ${quantity} units of item ${itemId} (${usageType})`);
+      
+      // Check if item is ready for phase transition
+      await this.checkPhaseTransition(itemId, businessId);
+      
+      return { success: true, phase: trackingPhase, quantity, usageType };
+      
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  
+  /**
+   * Check and perform phase transitions based on data collection period
+   * @param {number} itemId - Inventory item ID
+   * @param {number} businessId - Business ID
+   */
+  static async checkPhaseTransition(itemId, businessId) {
+    const client = await pool.connect();
+    try {
+      const tracking = await client.query(`
+        SELECT * FROM MinimalStockTracking 
+        WHERE item_id = $1 AND business_id = $2
+      `, [itemId, businessId]);
+      
+      if (tracking.rows.length === 0) return null;
+      
+      const item = tracking.rows[0];
+      const daysTracked = await client.query(`
+        SELECT CURRENT_DATE - data_collection_start_date as days_tracked
+        FROM MinimalStockTracking 
+        WHERE item_id = $1 AND business_id = $2
+      `, [itemId, businessId]);
+      
+      const daysSinceStart = daysTracked.rows[0].days_tracked;
+      
+      // Phase 1 -> Phase 2 transition (after 7 days with sufficient data)
+      if (item.tracking_phase === 1 && item.is_learning_mode && daysSinceStart >= 7 && item.total_usage_days >= 5) {
+        const preliminaryConsumption = await this.calculatePreliminaryConsumption(itemId, businessId);
+        if (preliminaryConsumption) {
+          await client.query(`
+            UPDATE MinimalStockTracking 
+            SET 
+              tracking_phase = 2,
+              preliminary_daily_consumption = $3,
+              phase_2_start_date = CURRENT_DATE,
+              is_learning_mode = false,
+              updated_at = NOW()
+            WHERE item_id = $1 AND business_id = $2
+          `, [itemId, businessId, preliminaryConsumption]);
+          
+          console.log(`🔄 Phase 2 activated for item ${itemId}: Preliminary automation enabled`);
+          
+          // Calculate initial reorder point
+          await this.calculateReorderPoint(itemId, businessId);
+          
+          return { phase: 2, status: 'preliminary_automation_enabled', dailyConsumption: preliminaryConsumption };
+        }
+      }
+      
+      // Phase 2 -> Phase 3 transition (after 14 days with robust data)
+      if (item.tracking_phase === 2 && daysSinceStart >= 14 && item.total_usage_days >= 10) {
+        const refinedConsumption = await this.calculateRefinedConsumption(itemId, businessId);
+        if (refinedConsumption) {
+          await client.query(`
+            UPDATE MinimalStockTracking 
+            SET 
+              tracking_phase = 3,
+              refined_daily_consumption = $3,
+              phase_3_start_date = CURRENT_DATE,
+              updated_at = NOW()
+            WHERE item_id = $1 AND business_id = $2
+          `, [itemId, businessId, refinedConsumption]);
+          
+          console.log(`⚡ Phase 3 activated for item ${itemId}: Full automation enabled`);
+          
+          // Recalculate reorder point with refined data
+          await this.calculateReorderPoint(itemId, businessId);
+          
+          return { phase: 3, status: 'full_automation_enabled', dailyConsumption: refinedConsumption };
+        }
+      }
+      
+      return null;
+      
+    } finally {
+      client.release();
+    }
+  }
+  
+  // =================== CONSUMPTION CALCULATIONS ===================
+  
+  /**
+   * Calculate preliminary average daily consumption (Phase 2)
+   * @param {number} itemId - Inventory item ID
+   * @param {number} businessId - Business ID
+   */
+  static async calculatePreliminaryConsumption(itemId, businessId) {
+    const client = await pool.connect();
+    try {
+      // Get usage data from the past 7 days
+      const usageData = await client.query(`
+        SELECT 
+          SUM(quantity_used) as total_consumption,
+          COUNT(DISTINCT usage_date) as usage_days
+        FROM ItemUsageHistory 
+        WHERE item_id = $1 AND business_id = $2 
+          AND usage_date >= CURRENT_DATE - INTERVAL '7 days'
+          AND usage_type IN ('usage', 'production')
+      `, [itemId, businessId]);
+      
+      const { total_consumption, usage_days } = usageData.rows[0];
+      
+      if (usage_days >= 5 && total_consumption > 0) {
+        const preliminaryAverage = parseFloat(total_consumption) / parseInt(usage_days);
+        console.log(`📊 Preliminary consumption calculated: ${preliminaryAverage.toFixed(2)} units/day`);
+        return preliminaryAverage;
+      }
+      
+      return null;
+    } finally {
+      client.release();
+    }
+  }
+  
+  /**
+   * Calculate refined average daily consumption (Phase 3)
+   * @param {number} itemId - Inventory item ID
+   * @param {number} businessId - Business ID
+   */
+  static async calculateRefinedConsumption(itemId, businessId) {
+    const client = await pool.connect();
+    try {
+      // Get usage data from the past 30 days with rolling average
+      const usageData = await client.query(`
+        SELECT 
+          AVG(daily_consumption) as rolling_average,
+          COUNT(*) as data_points
+        FROM (
+          SELECT 
+            usage_date,
+            SUM(quantity_used) as daily_consumption
+          FROM ItemUsageHistory 
+          WHERE item_id = $1 AND business_id = $2 
+            AND usage_date >= CURRENT_DATE - INTERVAL '30 days'
+            AND usage_type IN ('usage', 'production')
+          GROUP BY usage_date
+        ) daily_usage
+      `, [itemId, businessId]);
+      
+      const { rolling_average, data_points } = usageData.rows[0];
+      
+      if (data_points >= 14 && rolling_average > 0) {
+        const refinedAverage = parseFloat(rolling_average);
+        console.log(`⚡ Refined consumption calculated: ${refinedAverage.toFixed(2)} units/day`);
+        return refinedAverage;
+      }
+      
+      return null;
+    } finally {
+      client.release();
+    }
+  }
+  
+  // =================== LEAD TIME & REORDER POINT CALCULATIONS ===================
+  
+  /**
+   * Calculate average lead time for vendor-item combination
+   * @param {number} itemId - Inventory item ID
+   * @param {number} vendorId - Vendor ID
+   * @param {number} businessId - Business ID
+   */
+  static async calculateAverageLeadTime(itemId, vendorId, businessId) {
+    const client = await pool.connect();
+    try {
+      const leadTimeData = await client.query(`
+        SELECT 
+          AVG(EXTRACT(DAY FROM (sir.received_date - po.order_date))) as avg_lead_time_days,
+          COUNT(*) as order_count
+        FROM PurchaseOrders po
+        JOIN PurchaseOrderLineItems poli ON po.po_id = poli.po_id
+        JOIN StockInRecords sir ON po.vendor_id = sir.vendor_id 
+          AND DATE(sir.received_date) >= DATE(po.order_date)
+        WHERE poli.item_id = $1 
+          AND po.vendor_id = $2 
+          AND po.business_id = $3
+          AND po.status IN ('Received', 'Completed')
+          AND sir.received_date >= CURRENT_DATE - INTERVAL '6 months'
+      `, [itemId, vendorId, businessId]);
+      
+      const { avg_lead_time_days, order_count } = leadTimeData.rows[0];
+      
+      if (order_count >= 2) {
+        const averageLeadTime = Math.max(1, parseFloat(avg_lead_time_days) || 3);
+        
+        // Store lead time calculation
+        await client.query(`
+          INSERT INTO VendorLeadTimes (item_id, vendor_id, business_id, avg_lead_time_days, order_count, calculated_at)
+          VALUES ($1, $2, $3, $4, $5, NOW())
+          ON CONFLICT (item_id, vendor_id, business_id) 
+          DO UPDATE SET 
+            avg_lead_time_days = EXCLUDED.avg_lead_time_days,
+            order_count = EXCLUDED.order_count,
+            calculated_at = EXCLUDED.calculated_at
+        `, [itemId, vendorId, businessId, averageLeadTime, order_count]);
+        
+        return averageLeadTime;
+      }
+      
+      return 3; // Default lead time if insufficient data
+    } finally {
+      client.release();
+    }
+  }
+  
+  /**
+   * Calculate comprehensive reorder point using the full formula:
+   * Reorder Point = (Average Daily Consumption × Average Lead Time) + Safety Stock
+   * @param {number} itemId - Inventory item ID
+   * @param {number} businessId - Business ID
+   */
+  static async calculateReorderPoint(itemId, businessId) {
+    const client = await pool.connect();
+    try {
+      // Get current tracking data
+      const trackingResult = await client.query(`
+        SELECT * FROM MinimalStockTracking 
+        WHERE item_id = $1 AND business_id = $2
+      `, [itemId, businessId]);
+      
+      if (trackingResult.rows.length === 0 || trackingResult.rows[0].is_learning_mode) {
+        return null; // Skip calculation for Phase 1 items
+      }
+      
+      const tracking = trackingResult.rows[0];
+      
+      // Get appropriate daily consumption based on phase
+      let dailyConsumption;
+      if (tracking.tracking_phase === 2) {
+        dailyConsumption = tracking.preliminary_daily_consumption;
+      } else if (tracking.tracking_phase >= 3) {
+        dailyConsumption = tracking.refined_daily_consumption;
+      } else {
+        return null;
+      }
+      
+      if (!dailyConsumption || dailyConsumption <= 0) {
+        return null;
+      }
+      
+      // Get item details including default vendor
+      const itemResult = await client.query(`
+        SELECT default_vendor_id, safety_stock, name FROM InventoryItems 
+        WHERE item_id = $1 AND business_id = $2
+      `, [itemId, businessId]);
+      
+      if (itemResult.rows.length === 0) {
+        return null;
+      }
+      
+      const { default_vendor_id, safety_stock, name } = itemResult.rows[0];
+      
+      // Calculate average lead time
+      const averageLeadTime = default_vendor_id 
+        ? await this.calculateAverageLeadTime(itemId, default_vendor_id, businessId)
+        : 3; // Default if no vendor assigned
+      
+      // Calculate lead time consumption
+      const leadTimeConsumption = dailyConsumption * averageLeadTime;
+      
+      // Calculate safety stock (use database value or 50% of daily consumption)
+      const safetyStockAmount = safety_stock || (dailyConsumption * 0.5);
+      
+      // Final reorder point calculation
+      const reorderPoint = leadTimeConsumption + safetyStockAmount;
+      
+      // Store calculation in database
+      await client.query(`
+        INSERT INTO ReorderPointCalculations (
+          item_id, average_daily_consumption, average_lead_time_days,
+          safety_stock_quantity, reorder_point_quantity, calculation_method,
+          data_confidence_score, last_calculated_at
+        ) VALUES ($1, $2, $3, $4, $5, 'automated', $6, NOW())
+        ON CONFLICT (item_id) 
+        DO UPDATE SET 
+          average_daily_consumption = EXCLUDED.average_daily_consumption,
+          average_lead_time_days = EXCLUDED.average_lead_time_days,
+          safety_stock_quantity = EXCLUDED.safety_stock_quantity,
+          reorder_point_quantity = EXCLUDED.reorder_point_quantity,
+          calculation_method = EXCLUDED.calculation_method,
+          data_confidence_score = EXCLUDED.data_confidence_score,
+          last_calculated_at = EXCLUDED.last_calculated_at
+      `, [itemId, dailyConsumption, averageLeadTime, safetyStockAmount, reorderPoint, 
+          tracking.tracking_phase >= 3 ? 95.0 : 75.0]);
+      
+      // Update inventory item with calculated reorder point
+      await client.query(`
+        UPDATE InventoryItems 
+        SET reorder_point = $2, safety_stock = $3, updated_at = NOW()
+        WHERE item_id = $1
+      `, [itemId, reorderPoint, safetyStockAmount]);
+      
+      console.log(`📊 Reorder point calculated for ${name}: ${reorderPoint.toFixed(2)} units`);
+      console.log(`   📈 Daily consumption: ${dailyConsumption.toFixed(2)} units/day`);
+      console.log(`   🚚 Lead time: ${averageLeadTime} days`);
+      console.log(`   🛡️ Safety stock: ${safetyStockAmount.toFixed(2)} units`);
+      
+      // Check if item needs immediate alert
+      await this.checkStockAlert(itemId, businessId);
+      
+      return {
+        itemId,
+        itemName: name,
+        dailyConsumption,
+        averageLeadTime,
+        leadTimeConsumption,
+        safetyStockAmount,
+        reorderPoint,
+        trackingPhase: tracking.tracking_phase,
+        confidenceScore: tracking.tracking_phase >= 3 ? 95.0 : 75.0
+      };
+      
+    } finally {
+      client.release();
+    }
+  }
+  
+  // =================== ALERT MANAGEMENT ===================
+  
+  /**
+   * Check current stock levels and create alerts if needed
+   * @param {number} itemId - Inventory item ID
+   * @param {number} businessId - Business ID
+   */
+  static async checkStockAlert(itemId, businessId) {
+    const client = await pool.connect();
+    try {
+      // Get current stock and thresholds
+      const stockData = await client.query(`
+        SELECT 
+          ii.name,
+          ii.reorder_point,
+          ii.safety_stock,
+          COALESCE(SUM(ib.quantity), 0) as current_stock,
+          mst.is_learning_mode
+        FROM InventoryItems ii
+        LEFT JOIN InventoryBatches ib ON ii.item_id = ib.item_id AND ib.is_expired = false
+        LEFT JOIN MinimalStockTracking mst ON ii.item_id = mst.item_id
+        WHERE ii.item_id = $1 AND ii.business_id = $2
+        GROUP BY ii.item_id, ii.name, ii.reorder_point, ii.safety_stock, mst.is_learning_mode
+      `, [itemId, businessId]);
+      
+      if (stockData.rows.length === 0) return null;
+      
+      const { name, reorder_point, safety_stock, current_stock, is_learning_mode } = stockData.rows[0];
+      
+      // Skip alerts for items in learning mode
+      if (is_learning_mode) return null;
+      
+      let alertType = null;
+      if (current_stock <= (safety_stock || 0)) {
+        alertType = 'critical';
+      } else if (current_stock <= (reorder_point || 0)) {
+        alertType = 'low';
+      }
+      
+      if (alertType) {
+        // Check if alert already exists
+        const existingAlert = await client.query(`
+          SELECT alert_id FROM StockAlerts 
+          WHERE item_id = $1 AND alert_type = $2 AND status = 'active'
+        `, [itemId, alertType]);
+        
+        if (existingAlert.rows.length === 0) {
+          // Create new alert
+          await client.query(`
+            INSERT INTO StockAlerts (
+              item_id, business_id, alert_type, current_stock,
+              reorder_point, safety_stock, status
+            ) VALUES ($1, $2, $3, $4, $5, $6, 'active')
+          `, [itemId, businessId, alertType, current_stock, reorder_point, safety_stock]);
+          
+          console.log(`🚨 ${alertType.toUpperCase()} stock alert created for ${name}: ${current_stock} units remaining`);
+          
+          return {
+            alertType,
+            itemName: name,
+            currentStock: current_stock,
+            threshold: alertType === 'critical' ? safety_stock : reorder_point
+          };
+        }
+      }
+      
+      return null;
+    } finally {
+      client.release();
+    }
+  }
+  
+  /**
+   * Get all critical items that should appear in Create Reorder screen
+   * @param {number} businessId - Business ID
+   */
+  static async getCriticalLowStockItems(businessId) {
+    const client = await pool.connect();
+    try {
+      const criticalItems = await client.query(`
+        WITH usage AS (
+          SELECT 
+            h.item_id,
+            h.business_id,
+            SUM(h.quantity_used) AS total_used,
+            COUNT(DISTINCT h.usage_date) AS days_used
+          FROM ItemUsageHistory h
+          WHERE h.business_id = $1
+            AND h.usage_date >= CURRENT_DATE - INTERVAL '14 days'
+          GROUP BY h.item_id, h.business_id
+        ), stock AS (
+          SELECT 
+            ii.item_id,
+            ii.business_id,
+            ii.name AS item_name,
+            ii.reorder_point,
+            ii.safety_stock,
+            COALESCE(SUM(ib.quantity), 0) AS current_stock,
+            mst.tracking_phase,
+            mst.is_learning_mode,
+            CASE WHEN u.days_used > 0 THEN (u.total_used / u.days_used) ELSE NULL END AS daily_consumption
+          FROM InventoryItems ii
+          LEFT JOIN MinimalStockTracking mst ON ii.item_id = mst.item_id AND ii.business_id = mst.business_id
+          LEFT JOIN usage u ON u.item_id = ii.item_id AND u.business_id = ii.business_id
+          LEFT JOIN InventoryBatches ib ON ii.item_id = ib.item_id AND ib.is_expired = false
+          WHERE ii.business_id = $1 AND ii.is_active = TRUE
+          GROUP BY 
+            ii.item_id, ii.business_id, ii.name, ii.reorder_point, ii.safety_stock,
+            mst.tracking_phase, mst.is_learning_mode, u.days_used, u.total_used
+        ), enriched AS (
+          SELECT 
+            s.*,
+            CASE
+              WHEN s.current_stock <= 0 THEN 'out'
+              WHEN s.current_stock <= COALESCE(s.safety_stock,0) THEN 'critical'
+              WHEN s.current_stock <= COALESCE(s.reorder_point,0) THEN 'low'
+              ELSE 'ok'
+            END AS stock_status,
+            CASE 
+              WHEN s.current_stock <= 0 THEN NULL
+              WHEN s.daily_consumption IS NULL OR s.daily_consumption = 0 THEN NULL
+              ELSE ROUND(s.current_stock / s.daily_consumption, 2)
+            END AS estimated_days_remaining
+          FROM stock s
+        )
+        SELECT 
+          e.item_id,
+          e.item_name,
+          e.current_stock,
+          e.reorder_point,
+          e.safety_stock,
+          e.stock_status,
+          e.daily_consumption,
+          e.estimated_days_remaining,
+          v.name AS default_vendor_name,
+          NULL::DECIMAL(10,2) AS avg_lead_time_days,
+          e.tracking_phase,
+          sa.alert_type
+        FROM enriched e
+        LEFT JOIN InventoryItems ii2 ON ii2.item_id = e.item_id
+        LEFT JOIN Vendors v ON v.vendor_id = ii2.default_vendor_id
+        LEFT JOIN StockAlerts sa ON e.item_id = sa.item_id AND sa.status='active'
+        WHERE e.stock_status IN ('critical','low')
+          AND COALESCE(e.is_learning_mode, FALSE) = FALSE
+        ORDER BY 
+          CASE e.stock_status WHEN 'critical' THEN 1 WHEN 'low' THEN 2 ELSE 3 END,
+          e.estimated_days_remaining ASC NULLS LAST,
+          e.item_name;
+      `, [businessId]);
+
+      return criticalItems.rows;
+    } catch (err) {
+      // Since we removed dependency on the view, any 42P01 now indicates a deeper schema issue
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Unified helper for Create Reorder screen: shows
+   *  - Phase 1 (learning) items during their first 7 days (regardless of stock level)
+   *  - Phase 2/3 items that are actually low or critical (existing logic)
+   * Learning items are appended with stock_status = 'learning' and no alerts/reorder calculations yet.
+   * @param {number} businessId
+   */
+  static async getCreateReorderItems(businessId) {
+    const client = await pool.connect();
+    try {
+      // 1. Get existing low / critical items (Phase 2/3)
+      const alertItems = await this.getCriticalLowStockItems(businessId);
+
+      // 2. Fetch Phase 1 learning items still within first 7 days of tracking
+      const learningItemsResult = await client.query(`
+        SELECT 
+          ii.item_id,
+          ii.name AS item_name,
+          COALESCE(SUM(ib.quantity), 0) AS current_stock,
+          ii.reorder_point,
+          ii.safety_stock,
+          'learning' AS stock_status,
+          mst.tracking_phase,
+          mst.is_learning_mode,
+          (CURRENT_DATE - mst.data_collection_start_date) AS days_tracked
+        FROM InventoryItems ii
+        JOIN MinimalStockTracking mst ON ii.item_id = mst.item_id AND ii.business_id = mst.business_id
+        LEFT JOIN InventoryBatches ib ON ii.item_id = ib.item_id AND ib.is_expired = false
+        WHERE ii.business_id = $1
+          AND mst.is_learning_mode = true
+          AND (CURRENT_DATE - mst.data_collection_start_date) < 7
+          AND ii.is_active = true
+        GROUP BY ii.item_id, ii.name, ii.reorder_point, ii.safety_stock, mst.tracking_phase, mst.is_learning_mode, mst.data_collection_start_date
+        ORDER BY ii.name
+      `, [businessId]);
+
+      const learningItems = learningItemsResult.rows.map(r => ({
+        item_id: r.item_id,
+        item_name: r.item_name,
+        current_stock: r.current_stock,
+        reorder_point: r.reorder_point,
+        safety_stock: r.safety_stock,
+        stock_status: r.stock_status, // 'learning'
+        daily_consumption: null, // Not calculated yet
+        estimated_days_remaining: null,
+        default_vendor_name: null,
+        avg_lead_time_days: null,
+        tracking_phase: r.tracking_phase,
+        alert_type: null,
+        is_learning_mode: true,
+        days_tracked: r.days_tracked
+      }));
+
+      // Merge, keeping learning items at the end (they are informational only)
+      return [...alertItems, ...learningItems];
+    } finally {
+      client.release();
+    }
+  }
+  
+  // =================== BULK OPERATIONS ===================
+  
+  /**
+   * Run daily maintenance tasks for all items in a business
+   * @param {number} businessId - Business ID
+   */
+  static async runDailyMaintenance(businessId) {
+    const client = await pool.connect();
+    try {
+      console.log(`🔧 Running daily maintenance for business ${businessId}`);
+      
+      // Get all active items
+      const items = await client.query(`
+        SELECT item_id FROM InventoryItems 
+        WHERE business_id = $1 AND is_active = true
+      `, [businessId]);
+      
+      const results = {
+        transitionsProcessed: 0,
+        reorderPointsCalculated: 0,
+        alertsCreated: 0,
+        errors: []
+      };
+      
+      for (const item of items.rows) {
+        try {
+          // Check for phase transitions
+          const transition = await this.checkPhaseTransition(item.item_id, businessId);
+          if (transition) {
+            results.transitionsProcessed++;
+          }
+          
+          // Calculate/update reorder points for non-learning items
+          const reorderCalc = await this.calculateReorderPoint(item.item_id, businessId);
+          if (reorderCalc) {
+            results.reorderPointsCalculated++;
+          }
+          
+          // Check for stock alerts
+          const alert = await this.checkStockAlert(item.item_id, businessId);
+          if (alert) {
+            results.alertsCreated++;
+          }
+          
+        } catch (error) {
+          results.errors.push({
+            itemId: item.item_id,
+            error: error.message
+          });
+        }
+      }
+      
+      console.log(`✅ Daily maintenance completed:`, results);
+      return results;
+      
+    } finally {
+      client.release();
+    }
+  }
+  
+  /**
+   * Get comprehensive tracking status for all items
+   * @param {number} businessId - Business ID
+   */
+  static async getTrackingStatus(businessId) {
+    const client = await pool.connect();
+    try {
+      const status = await client.query(`
+        WITH usage AS (
+          SELECT 
+            h.item_id,
+            h.business_id,
+            SUM(h.quantity_used) AS total_used,
+            COUNT(DISTINCT h.usage_date) AS days_used
+          FROM ItemUsageHistory h
+          WHERE h.business_id = $1
+            AND h.usage_date >= CURRENT_DATE - INTERVAL '14 days'
+          GROUP BY h.item_id, h.business_id
+        ), base AS (
+          SELECT 
+            ii.item_id,
+            COALESCE(ii.current_stock,0) AS current_stock,
+            ii.reorder_point,
+            ii.safety_stock,
+            mst.tracking_phase,
+            mst.is_learning_mode,
+            CASE WHEN u.days_used > 0 THEN (u.total_used / u.days_used) ELSE NULL END AS daily_consumption
+          FROM InventoryItems ii
+          LEFT JOIN MinimalStockTracking mst ON ii.item_id = mst.item_id AND ii.business_id = mst.business_id
+          LEFT JOIN usage u ON u.item_id = ii.item_id AND u.business_id = ii.business_id
+          WHERE ii.business_id = $1 AND ii.is_active = TRUE
+        ), labeled AS (
+          SELECT 
+            b.*,
+            CASE
+              WHEN b.current_stock <= 0 THEN 'out'
+              WHEN b.current_stock <= COALESCE(b.safety_stock,0) THEN 'critical'
+              WHEN b.current_stock <= COALESCE(b.reorder_point,0) THEN 'low'
+              ELSE 'ok'
+            END AS stock_status
+          FROM base b
+        )
+        SELECT
+          COUNT(*) AS total_items,
+          SUM(CASE WHEN tracking_phase = 1 AND is_learning_mode = TRUE THEN 1 ELSE 0 END) AS phase1_learning,
+          SUM(CASE WHEN tracking_phase = 2 THEN 1 ELSE 0 END) AS phase2_preliminary,
+          SUM(CASE WHEN tracking_phase >= 3 THEN 1 ELSE 0 END) AS phase3_full,
+          SUM(CASE WHEN stock_status = 'critical' THEN 1 ELSE 0 END) AS critical_items,
+          SUM(CASE WHEN stock_status = 'low' THEN 1 ELSE 0 END) AS low_stock_items,
+          AVG(CASE WHEN tracking_phase >= 2 THEN daily_consumption END) AS avg_daily_consumption,
+          (SELECT COUNT(*) FROM StockAlerts sa WHERE sa.status='active' AND sa.business_id = $1) AS active_alerts
+        FROM labeled;
+      `, [businessId]);
+      
+      return status.rows[0];
+    } finally {
+      client.release();
+    }
+  }
+}
+
+module.exports = MinimalStockService;

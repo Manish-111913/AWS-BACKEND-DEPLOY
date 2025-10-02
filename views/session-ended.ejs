@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Session Ended - Invexis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .session-ended-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+            padding: 50px 40px;
+            text-align: center;
+            max-width: 500px;
+            width: 100%;
+            animation: slideUp 0.6s ease;
+        }
+        
+        .success-icon {
+            font-size: 4em;
+            margin-bottom: 20px;
+            animation: bounceIn 1s ease;
+        }
+        
+        .table-number {
+            color: #27ae60;
+            font-size: 1.2em;
+            font-weight: 600;
+            margin-bottom: 10px;
+            padding: 8px 16px;
+            background: #d5f4e6;
+            border-radius: 20px;
+            display: inline-block;
+        }
+        
+        .session-ended-title {
+            color: #2c3e50;
+            font-size: 2em;
+            font-weight: 700;
+            margin-bottom: 15px;
+        }
+        
+        .session-ended-message {
+            color: #6c757d;
+            font-size: 1.1em;
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+        
+        .total-paid {
+            background: #d5f4e6;
+            padding: 20px;
+            border-radius: 15px;
+            margin: 25px 0;
+            border-left: 4px solid #27ae60;
+        }
+        
+        .total-label {
+            color: #27ae60;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        
+        .total-amount {
+            font-size: 2em;
+            font-weight: 700;
+            color: #2c3e50;
+        }
+        
+        .thank-you-message {
+            color: #95a5a6;
+            font-size: 0.95em;
+            margin-bottom: 30px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #3498db;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+            flex-direction: column;
+        }
+        
+        .btn {
+            padding: 15px 25px;
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(39, 174, 96, 0.4);
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(39, 174, 96, 0.6);
+        }
+        
+        .btn-secondary {
+            background: #f8f9fa;
+            color: #6c757d;
+            border: 2px solid #e1e5e9;
+        }
+        
+        .btn-secondary:hover {
+            background: #e9ecef;
+            border-color: #adb5bd;
+        }
+        
+        .logo {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+            border-radius: 15px;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 700;
+            font-size: 1.5em;
+        }
+        
+        .feedback-section {
+            margin: 25px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            text-align: left;
+        }
+        
+        .feedback-title {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+            font-weight: 600;
+            text-align: center;
+        }
+        
+        .rating-stars {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin: 15px 0;
+        }
+        
+        .star {
+            font-size: 2em;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .star:hover,
+        .star.selected {
+            color: #f39c12;
+        }
+        
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        @keyframes bounceIn {
+            0% {
+                opacity: 0;
+                transform: scale(0.3);
+            }
+            50% {
+                opacity: 1;
+                transform: scale(1.05);
+            }
+            70% {
+                transform: scale(0.9);
+            }
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .session-ended-container {
+                padding: 30px 25px;
+            }
+            
+            .session-ended-title {
+                font-size: 1.5em;
+            }
+            
+            .success-icon {
+                font-size: 3em;
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="session-ended-container">
+        <div class="logo">I</div>
+        <div class="success-icon">✅</div>
+        <div class="table-number">Table <%= tableNumber %></div>
+        <h1 class="session-ended-title">Session Complete!</h1>
+        <p class="session-ended-message"><%= message %></p>
+        
+        <% if (typeof totalAmount !== 'undefined' && totalAmount > 0) { %>
+        <div class="total-paid">
+            <div class="total-label">Total Paid</div>
+            <div class="total-amount">$<%= totalAmount.toFixed(2) %></div>
+        </div>
+        <% } %>
+        
+        <div class="thank-you-message">
+            Thank you for dining with us! We hope you enjoyed your experience. 
+            Your table is now available for the next guests.
+        </div>
+        
+        <div class="feedback-section">
+            <div class="feedback-title">How was your experience?</div>
+            <div class="rating-stars">
+                <span class="star" onclick="setRating(1)">⭐</span>
+                <span class="star" onclick="setRating(2)">⭐</span>
+                <span class="star" onclick="setRating(3)">⭐</span>
+                <span class="star" onclick="setRating(4)">⭐</span>
+                <span class="star" onclick="setRating(5)">⭐</span>
+            </div>
+        </div>
+        
+        <div class="action-buttons">
+            <a href="/" class="btn btn-primary">
+                🏠 Return to Home
+            </a>
+            <button onclick="shareExperience()" class="btn btn-secondary">
+                📤 Share Experience
+            </button>
+        </div>
+    </div>
+    
+    <script>
+        let selectedRating = 0;
+        
+        function setRating(rating) {
+            selectedRating = rating;
+            const stars = document.querySelectorAll('.star');
+            stars.forEach((star, index) => {
+                if (index < rating) {
+                    star.classList.add('selected');
+                } else {
+                    star.classList.remove('selected');
+                }
+            });
+            
+            // Submit rating after a short delay
+            setTimeout(() => {
+                submitRating(rating);
+            }, 1000);
+        }
+        
+        function submitRating(rating) {
+            fetch('/api/feedback/rating', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tableNumber: '<%= tableNumber %>',
+                    rating: rating,
+                    sessionCompleted: true
+                })
+            }).then(() => {
+                const feedbackSection = document.querySelector('.feedback-section');
+                feedbackSection.innerHTML = `
+                    <div class="feedback-title">Thank you for your feedback!</div>
+                    <div style="text-align: center; color: #27ae60; font-size: 1.5em; margin: 15px 0;">
+                        ⭐ ${rating}/5 stars
+                    </div>
+                `;
+            }).catch(err => {
+                console.error('Failed to submit rating:', err);
+            });
+        }
+        
+        function shareExperience() {
+            if (navigator.share) {
+                navigator.share({
+                    title: 'Great dining experience at Invexis',
+                    text: `Just had a wonderful meal at Invexis! Their digital dining system made everything so smooth. ${selectedRating > 0 ? `Rated ${selectedRating}/5 stars!` : ''}`,
+                    url: window.location.origin
+                });
+            } else {
+                // Fallback: copy restaurant info to clipboard
+                const text = `Just had a wonderful meal at Invexis! Check them out at ${window.location.origin}`;
+                navigator.clipboard.writeText(text).then(() => {
+                    alert('Restaurant info copied to clipboard!');
+                });
+            }
+        }
+        
+        // Confetti effect
+        setTimeout(() => {
+            // Simple confetti animation
+            for (let i = 0; i < 50; i++) {
+                const confetti = document.createElement('div');
+                confetti.style.cssText = `
+                    position: fixed;
+                    top: -10px;
+                    left: ${Math.random() * 100}%;
+                    width: 10px;
+                    height: 10px;
+                    background: ${['#667eea', '#764ba2', '#27ae60', '#f39c12', '#e74c3c'][Math.floor(Math.random() * 5)]};
+                    pointer-events: none;
+                    animation: fall 3s linear;
+                    z-index: 1000;
+                `;
+                document.body.appendChild(confetti);
+                
+                setTimeout(() => {
+                    confetti.remove();
+                }, 3000);
+            }
+        }, 500);
+        
+        // Add CSS for confetti animation
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes fall {
+                to {
+                    transform: translateY(100vh) rotate(360deg);
+                }
+            }
+        `;
+        document.head.appendChild(style);
+    </script>
+</body>
+</html>

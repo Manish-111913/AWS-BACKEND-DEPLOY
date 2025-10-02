@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Table <%= session.table_number %> - Invexis Digital Dining</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f8f9fa;
+            min-height: 100vh;
+            color: #2c3e50;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+        
+        .restaurant-name {
+            font-size: 1.5em;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+        
+        .table-info {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .session-info {
+            background: white;
+            margin: 20px;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+        
+        .session-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f8f9fa;
+        }
+        
+        .session-title {
+            font-size: 1.3em;
+            font-weight: 600;
+        }
+        
+        .session-status {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+        }
+        
+        .status-active {
+            background: #d5f4e6;
+            color: #27ae60;
+        }
+        
+        .session-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        
+        .detail-card {
+            text-align: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        
+        .detail-value {
+            font-size: 1.5em;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+        
+        .detail-label {
+            color: #6c757d;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .orders-section {
+            background: white;
+            margin: 20px;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+        
+        .section-title {
+            font-size: 1.3em;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #2c3e50;
+        }
+        
+        .order-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 0;
+            border-bottom: 1px solid #f1f3f4;
+        }
+        
+        .order-item:last-child {
+            border-bottom: none;
+        }
+        
+        .item-details {
+            flex: 1;
+        }
+        
+        .item-name {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        
+        .item-meta {
+            color: #6c757d;
+            font-size: 0.9em;
+        }
+        
+        .item-price {
+            font-weight: 700;
+            color: #27ae60;
+            font-size: 1.1em;
+        }
+        
+        .order-status {
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 0.8em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-left: 15px;
+        }
+        
+        .status-placed { background: #e3f2fd; color: #1976d2; }
+        .status-preparing { background: #fff3e0; color: #f57c00; }
+        .status-ready { background: #e8f5e8; color: #388e3c; }
+        .status-served { background: #f3e5f5; color: #7b1fa2; }
+        
+        .empty-orders {
+            text-align: center;
+            padding: 40px;
+            color: #6c757d;
+        }
+        
+        .empty-icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+            opacity: 0.5;
+        }
+        
+        .total-section {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            margin: 20px;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .total-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 10px 0;
+        }
+        
+        .total-label {
+            font-size: 1.1em;
+        }
+        
+        .total-value {
+            font-size: 1.3em;
+            font-weight: 700;
+        }
+        
+        .final-total {
+            font-size: 1.5em !important;
+            padding-top: 15px;
+            border-top: 2px solid rgba(255, 255, 255, 0.3);
+            margin-top: 15px;
+        }
+        
+        .action-buttons {
+            padding: 20px;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            flex: 1;
+            min-width: 150px;
+            padding: 15px 25px;
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.6);
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(39, 174, 96, 0.4);
+        }
+        
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(39, 174, 96, 0.6);
+        }
+        
+        .help-section {
+            background: white;
+            margin: 20px;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        
+        .help-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #2c3e50;
+        }
+        
+        .help-text {
+            color: #6c757d;
+            line-height: 1.5;
+            margin-bottom: 15px;
+        }
+        
+        .help-contact {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .contact-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        
+        .contact-item:hover {
+            color: #764ba2;
+        }
+        
+        @media (max-width: 768px) {
+            .session-details {
+                grid-template-columns: 1fr;
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+            }
+            
+            .btn {
+                min-width: 100%;
+            }
+            
+            .help-contact {
+                flex-direction: column;
+            }
+            
+            .order-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+            
+            .item-price {
+                align-self: flex-end;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="restaurant-name">Invexis Digital Dining</div>
+        <div class="table-info">Table <%= session.table_number %> • Session Active</div>
+    </div>
+    
+    <div class="session-info">
+        <div class="session-header">
+            <div class="session-title">Your Dining Session</div>
+            <div class="session-status status-active">● Active</div>
+        </div>
+        
+        <div class="session-details">
+            <div class="detail-card">
+                <div class="detail-value"><%= session.customer_count || 1 %></div>
+                <div class="detail-label">Customers</div>
+            </div>
+            <div class="detail-card">
+                <div class="detail-value"><%= new Date(session.started_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) %></div>
+                <div class="detail-label">Started</div>
+            </div>
+            <div class="detail-card">
+                <div class="detail-value"><%= session.billing_model === 'eat_first' ? 'Eat First' : 'Pay First' %></div>
+                <div class="detail-label">Billing Model</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="orders-section">
+        <div class="section-title">Current Orders</div>
+        <% if (orders && orders.length > 0) { %>
+            <% orders.forEach(order => { %>
+                <div class="order-item">
+                    <div class="item-details">
+                        <div class="item-name"><%= order.item_name %></div>
+                        <div class="item-meta">
+                            Qty: <%= order.quantity %> × $<%= order.unit_price.toFixed(2) %>
+                            <% if (order.special_instructions) { %>
+                                <br>Note: <%= order.special_instructions %>
+                            <% } %>
+                            <br>Ordered: <%= new Date(order.ordered_at).toLocaleTimeString() %>
+                        </div>
+                    </div>
+                    <div class="item-price">$<%= order.total_price.toFixed(2) %></div>
+                    <div class="order-status status-<%= order.order_status %>">
+                        <%= order.order_status %>
+                    </div>
+                </div>
+            <% }); %>
+        <% } else { %>
+            <div class="empty-orders">
+                <div class="empty-icon">🍽️</div>
+                <div>No orders yet</div>
+                <div style="margin-top: 10px; color: #95a5a6; font-size: 0.9em;">
+                    <% if (canOrder) { %>
+                        Tap "Add Items" below to start ordering
+                    <% } else { %>
+                        Orders have been placed at the counter
+                    <% } %>
+                </div>
+            </div>
+        <% } %>
+    </div>
+    
+    <% if (session.total_amount > 0) { %>
+        <div class="total-section">
+            <div class="total-row">
+                <div class="total-label">Subtotal:</div>
+                <div class="total-value">$<%= session.total_amount.toFixed(2) %></div>
+            </div>
+            <% if (session.tax_amount > 0) { %>
+                <div class="total-row">
+                    <div class="total-label">Tax:</div>
+                    <div class="total-value">$<%= session.tax_amount.toFixed(2) %></div>
+                </div>
+            <% } %>
+            <% if (session.discount_amount > 0) { %>
+                <div class="total-row">
+                    <div class="total-label">Discount:</div>
+                    <div class="total-value">-$<%= session.discount_amount.toFixed(2) %></div>
+                </div>
+            <% } %>
+            <div class="total-row final-total">
+                <div class="total-label">Total:</div>
+                <div class="total-value">$<%= session.final_amount.toFixed(2) %></div>
+            </div>
+        </div>
+    <% } %>
+    
+    <div class="action-buttons">
+        <% if (canOrder) { %>
+            <button onclick="addItems()" class="btn btn-primary">
+                🍽️ Add Items
+            </button>
+        <% } %>
+        
+        <% if (showPayment) { %>
+            <button onclick="processPayment()" class="btn btn-success">
+                💳 Pay Now
+            </button>
+        <% } %>
+        
+        <button onclick="callStaff()" class="btn" style="background: #f8f9fa; color: #6c757d;">
+            🔔 Call Staff
+        </button>
+    </div>
+    
+    <div class="help-section">
+        <div class="help-title">Need Help?</div>
+        <div class="help-text">
+            This is your personal dining session. All family members can scan the same QR code to view and add to this order.
+        </div>
+        <div class="help-contact">
+            <a href="tel:+1234567890" class="contact-item">
+                📞 Call Restaurant
+            </a>
+            <a href="#" onclick="shareSession()" class="contact-item">
+                📤 Share with Family
+            </a>
+        </div>
+    </div>
+    
+    <script>
+        // Auto-refresh every 30 seconds to get order status updates
+        setInterval(() => {
+            location.reload();
+        }, 30000);
+        
+        function addItems() {
+            // Redirect to menu page
+            window.location.href = `/menu/${encodeURIComponent('<%= session.session_id %>')}`;
+        }
+        
+        function processPayment() {
+            if (confirm('Process payment for $<%= session.final_amount.toFixed(2) %>?')) {
+                // Redirect to payment page
+                window.location.href = `/payment/${encodeURIComponent('<%= session.session_id %>')}`;
+            }
+        }
+        
+        function callStaff() {
+            if (confirm('Call staff to Table <%= session.table_number %>?')) {
+                // This could trigger a notification to staff
+                fetch('/api/staff/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sessionId: '<%= session.session_id %>',
+                        tableNumber: '<%= session.table_number %>',
+                        requestType: 'assistance'
+                    })
+                }).then(() => {
+                    alert('Staff has been notified. Someone will be with you shortly.');
+                }).catch(() => {
+                    alert('Unable to notify staff. Please call the restaurant directly.');
+                });
+            }
+        }
+        
+        function shareSession() {
+            if (navigator.share) {
+                navigator.share({
+                    title: 'Join our table at Invexis',
+                    text: 'Scan the QR code at Table <%= session.table_number %> to join our order!',
+                    url: window.location.href
+                });
+            } else {
+                // Fallback: copy link to clipboard
+                navigator.clipboard.writeText(window.location.href).then(() => {
+                    alert('Session link copied to clipboard!');
+                });
+            }
+        }
+        
+        // Show online/offline status
+        window.addEventListener('online', () => {
+            document.body.style.borderTop = '4px solid #27ae60';
+        });
+        
+        window.addEventListener('offline', () => {
+            document.body.style.borderTop = '4px solid #e74c3c';
+        });
+    </script>
+</body>
+</html>

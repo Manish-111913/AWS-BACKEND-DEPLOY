@@ -1,0 +1,179 @@
+service: qrbilling-backend
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: ap-south-1  # Mumbai, India
+  stage: ${opt:stage, 'dev'}
+  memorySize: 512
+  timeout: 30
+  
+  # Environment variables for Lambda
+  environment:
+    NODE_ENV: ${opt:stage, 'dev'}
+    # Database configuration - these should be set in AWS Systems Manager Parameter Store or Secrets Manager
+    DATABASE_URL: ${env:DATABASE_URL, ''}
+    DB_HOST: ${env:DB_HOST, ''}
+    DB_PORT: ${env:DB_PORT, '5432'}
+    DB_NAME: ${env:DB_NAME, ''}
+    DB_USER: ${env:DB_USER, ''}
+    DB_PASSWORD: ${env:DB_PASSWORD, ''}
+    # Other environment variables
+    JWT_SECRET: ${env:JWT_SECRET, ''}
+    FRONTEND_REDIRECT_ORIGIN: ${env:FRONTEND_REDIRECT_ORIGIN, 'https://menu-frontend-9327c.web.app'}
+    PUBLIC_BASE_URL: ${env:PUBLIC_BASE_URL, ''}
+    # Feature flags
+    ALLOW_DIRECT_PAY_WITHOUT_ORDER: ${env:ALLOW_DIRECT_PAY_WITHOUT_ORDER, 'false'}
+    ONBOARDING_TABLE_COUNT: ${env:ONBOARDING_TABLE_COUNT, '20'}
+    
+  # IAM permissions for Lambda function
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource: 'arn:aws:logs:*:*:*'
+        - Effect: Allow
+          Action:
+            - ssm:GetParameter
+            - ssm:GetParameters
+            - ssm:GetParametersByPath
+          Resource: 'arn:aws:ssm:*:*:parameter/qrbilling/*'
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+          Resource: 'arn:aws:secretsmanager:*:*:secret:qrbilling/*'
+
+functions:
+  api:
+    handler: server.handler
+    events:
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors:
+            origin: 
+              - 'http://localhost:3000'
+              - 'http://localhost:3001'
+              - 'http://127.0.0.1:3000' 
+              - 'http://127.0.0.1:3001'
+              - 'https://menu-frontend-9327c.web.app'
+            headers:
+              - Content-Type
+              - Authorization
+              - Cache-Control
+              - X-Tenant-Id
+              - X-Business-Id
+            allowCredentials: true
+      - http:
+          path: /
+          method: ANY
+          cors:
+            origin: 
+              - 'http://localhost:3000'
+              - 'http://localhost:3001'
+              - 'http://127.0.0.1:3000'
+              - 'http://127.0.0.1:3001' 
+              - 'https://menu-frontend-9327c.web.app'
+            headers:
+              - Content-Type
+              - Authorization
+              - Cache-Control
+              - X-Tenant-Id
+              - X-Business-Id
+            allowCredentials: true
+
+# Package configuration
+package:
+  exclude:
+    - .git/**
+    - .gitignore
+    - README.md
+    - package-lock.json
+    - .env
+    - .env.*
+    - node_modules/aws-sdk/**  # AWS SDK is provided by Lambda runtime
+    - testing_tools/**
+    - tests/**
+    - '**/*.test.js'
+    - '**/*.spec.js'
+    - uploads/ocr/**  # Exclude OCR files to reduce package size
+    - uploads/temp/**
+    - .wwebjs_cache/**
+    - '*.md'
+    - '*.txt'
+    - check-*.js
+    - test-*.js
+    - debug-*.js
+    - fix-*.js
+    - verify-*.js
+    - investigate-*.js
+    - quick-*.js
+    - final-*.js
+    - demo-*.js
+    - setup-*.js
+    - cleanup-*.js
+    - run-*.js
+    - '*.ps1'
+    - '*.sh'
+    - '*.bat'
+    - samconfig.toml
+
+# Plugins
+plugins:
+  - serverless-offline  # For local development
+  - serverless-dotenv-plugin  # For loading .env files
+
+# Custom configuration
+custom:
+  # Serverless offline configuration for local development
+  serverless-offline:
+    httpPort: 5000
+    host: 0.0.0.0
+    
+  # Environment-specific configurations
+  stages:
+    dev:
+      memorySize: 512
+      timeout: 30
+    staging:
+      memorySize: 1024
+      timeout: 60
+    prod:
+      memorySize: 1024
+      timeout: 60
+      
+  # API Gateway configuration
+  apiGateway:
+    binaryMediaTypes:
+      - 'image/*'
+      - 'application/pdf'
+      - 'multipart/form-data'
+
+# Resources (optional - for creating additional AWS resources)
+resources:
+  Resources:
+    # CloudWatch Log Group for better log retention
+    ApiLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/qrbilling-backend-${self:provider.stage}-api
+        RetentionInDays: 14
+        
+  Outputs:
+    ApiGatewayRestApiId:
+      Value:
+        Ref: ApiGatewayRestApi
+      Export:
+        Name: ${self:service}-${self:provider.stage}-restApiId
+        
+    ApiGatewayRestApiRootResourceId:
+      Value:
+        Fn::GetAtt:
+          - ApiGatewayRestApi
+          - RootResourceId
+      Export:
+        Name: ${self:service}-${self:provider.stage}-rootResourceId

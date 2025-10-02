@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Table Unavailable - Invexis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #f39c12 0%, #e74c3c 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .unavailable-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+            padding: 50px 40px;
+            text-align: center;
+            max-width: 500px;
+            width: 100%;
+            animation: slideUp 0.6s ease;
+        }
+        
+        .unavailable-icon {
+            font-size: 4em;
+            margin-bottom: 20px;
+            animation: pulse 2s infinite;
+        }
+        
+        .table-number {
+            color: #f39c12;
+            font-size: 1.2em;
+            font-weight: 600;
+            margin-bottom: 10px;
+            padding: 8px 16px;
+            background: #fef9e7;
+            border-radius: 20px;
+            display: inline-block;
+        }
+        
+        .unavailable-title {
+            color: #2c3e50;
+            font-size: 2em;
+            font-weight: 700;
+            margin-bottom: 15px;
+        }
+        
+        .unavailable-message {
+            color: #6c757d;
+            font-size: 1.1em;
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+        
+        .support-message {
+            color: #95a5a6;
+            font-size: 0.95em;
+            margin-bottom: 30px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #f39c12;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+            flex-direction: column;
+        }
+        
+        .btn {
+            padding: 15px 25px;
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #f39c12 0%, #e74c3c 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(243, 156, 18, 0.4);
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(243, 156, 18, 0.6);
+        }
+        
+        .btn-secondary {
+            background: #f8f9fa;
+            color: #6c757d;
+            border: 2px solid #e1e5e9;
+        }
+        
+        .btn-secondary:hover {
+            background: #e9ecef;
+            border-color: #adb5bd;
+        }
+        
+        .logo {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #f39c12 0%, #e74c3c 100%);
+            border-radius: 15px;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 700;
+            font-size: 1.5em;
+        }
+        
+        .alternatives {
+            margin: 25px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            text-align: left;
+        }
+        
+        .alternatives h3 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+        
+        .alternatives ul {
+            color: #6c757d;
+            padding-left: 20px;
+        }
+        
+        .alternatives li {
+            margin: 8px 0;
+            line-height: 1.4;
+        }
+        
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.1);
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .unavailable-container {
+                padding: 30px 25px;
+            }
+            
+            .unavailable-title {
+                font-size: 1.5em;
+            }
+            
+            .unavailable-icon {
+                font-size: 3em;
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="unavailable-container">
+        <div class="logo">I</div>
+        <div class="unavailable-icon">🚫</div>
+        <div class="table-number">Table <%= tableNumber %></div>
+        <h1 class="unavailable-title">Table Unavailable</h1>
+        <p class="unavailable-message"><%= message %></p>
+        <p class="support-message"><%= supportMessage %></p>
+        
+        <div class="alternatives">
+            <h3>What you can do:</h3>
+            <ul>
+                <li>Choose another available table</li>
+                <li>Ask staff about table availability</li>
+                <li>Wait for this table to become available</li>
+                <li>Consider ordering at the counter</li>
+            </ul>
+        </div>
+        
+        <div class="action-buttons">
+            <a href="/" class="btn btn-primary">
+                🏠 Find Another Table
+            </a>
+            <a href="tel:+1234567890" class="btn btn-secondary">
+                📞 Call Staff
+            </a>
+        </div>
+    </div>
+</body>
+</html>
