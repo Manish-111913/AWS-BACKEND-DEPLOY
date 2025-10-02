@@ -2,34 +2,16 @@ service: qrbilling-backend
 
 provider:
   name: aws
-  region: ap-south-1  # Mumbai, India
+  region: ap-south-1
   stage: ${opt:stage, 'dev'}
-  memorySize: 512
-  timeout: 30
+  # ECR image configuration
   ecr:
     images:
       qrbilling-backend:
         path: ./
         file: Dockerfile
+        platform: linux/amd64
   
-  # Environment variables for Lambda
-  environment:
-    NODE_ENV: ${opt:stage, 'dev'}
-    # Database configuration - these should be set in AWS Systems Manager Parameter Store or Secrets Manager
-    DATABASE_URL: ${env:DATABASE_URL, ''}
-    DB_HOST: ${env:DB_HOST, ''}
-    DB_PORT: ${env:DB_PORT, '5432'}
-    DB_NAME: ${env:DB_NAME, ''}
-    DB_USER: ${env:DB_USER, ''}
-    DB_PASSWORD: ${env:DB_PASSWORD, ''}
-    # Other environment variables
-    JWT_SECRET: ${env:JWT_SECRET, ''}
-    FRONTEND_REDIRECT_ORIGIN: ${env:FRONTEND_REDIRECT_ORIGIN, 'https://menu-frontend-9327c.web.app'}
-    PUBLIC_BASE_URL: ${env:PUBLIC_BASE_URL, ''}
-    # Feature flags
-    ALLOW_DIRECT_PAY_WITHOUT_ORDER: ${env:ALLOW_DIRECT_PAY_WITHOUT_ORDER, 'false'}
-    ONBOARDING_TABLE_COUNT: ${env:ONBOARDING_TABLE_COUNT, '20'}
-    
   # IAM permissions for Lambda function
   iam:
     role:
@@ -40,114 +22,72 @@ provider:
             - logs:CreateLogStream
             - logs:PutLogEvents
           Resource: 'arn:aws:logs:*:*:*'
+        # Grant permissions to retrieve secrets and parameters
         - Effect: Allow
           Action:
             - ssm:GetParameter
-            - ssm:GetParameters
-            - ssm:GetParametersByPath
-          Resource: 'arn:aws:ssm:*:*:parameter/qrbilling/*'
-        - Effect: Allow
-          Action:
             - secretsmanager:GetSecretValue
-          Resource: 'arn:aws:secretsmanager:*:*:secret:qrbilling/*'
-        - Effect: Allow
-          Action:
-            - ecr:GetAuthorizationToken
-            - ecr:BatchCheckLayerAvailability
-            - ecr:GetDownloadUrlForLayer
-            - ecr:BatchGetImage
-          Resource: '*'
+          Resource: 'arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:qrbilling/*'
+
+# HTTP API CORS configuration (Global level)
+# This is correctly configured to apply to all routes
+httpApi:
+  cors:
+    allowedOrigins:
+      - 'http://localhost:3000'
+      - 'http://localhost:3001' 
+      - 'http://127.0.0.1:3000'
+      - 'http://127.0.0.1:3001'
+      - 'https://menu-frontend-9327c.web.app'
+    allowedHeaders:
+      - Content-Type
+      - Authorization
+      - Cache-Control
+      - X-Tenant-Id
+      - X-Business-Id
+    allowedMethods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+      - PATCH
+    allowCredentials: true
 
 functions:
   api:
-    image:
-      name: qrbilling-backend
-      uri: ${aws:accountId}.dkr.ecr.${aws:region}.amazonaws.com/qrbilling-backend:latest
+    image: qrbilling-backend # Refers to the image name under `ecr`
+    memorySize: ${self:custom.stages.${self:provider.stage}.memorySize}
+    timeout: ${self:custom.stages.${self:provider.stage}.timeout}
     events:
-      - http:
+      - httpApi:
           path: /{proxy+}
           method: ANY
-          cors:
-            origin: 
-              - 'http://localhost:3000'
-              - 'http://localhost:3001'
-              - 'http://127.0.0.1:3000' 
-              - 'http://127.0.0.1:3001'
-              - 'https://menu-frontend-9327c.web.app'
-            headers:
-              - Content-Type
-              - Authorization
-              - Cache-Control
-              - X-Tenant-Id
-              - X-Business-Id
-            allowCredentials: true
-      - http:
+      - httpApi:
           path: /
           method: ANY
-          cors:
-            origin: 
-              - 'http://localhost:3000'
-              - 'http://localhost:3001'
-              - 'http://127.0.0.1:3000'
-              - 'http://127.0.0.1:3001' 
-              - 'https://menu-frontend-9327c.web.app'
-            headers:
-              - Content-Type
-              - Authorization
-              - Cache-Control
-              - X-Tenant-Id
-              - X-Business-Id
-            allowCredentials: true
+    environment:
+      # Inject environment variables from .env.lambda file
+      NODE_ENV: ${self:provider.stage}
+      DATABASE_URL: ${file(.env.lambda):DATABASE_URL, ''}
+      DB_HOST: ${file(.env.lambda):DB_HOST, ''}
+      DB_PORT: ${file(.env.lambda):DB_PORT, '5432'}
+      DB_NAME: ${file(.env.lambda):DB_NAME, ''}
+      DB_USER: ${file(.env.lambda):DB_USER, ''}
+      DB_PASSWORD: ${file(.env.lambda):DB_PASSWORD, ''}
+      JWT_SECRET: ${file(.env.lambda):JWT_SECRET, ''}
+      FRONTEND_REDIRECT_ORIGIN: ${file(.env.lambda):FRONTEND_REDIRECT_ORIGIN, 'https://menu-frontend-9327c.web.app'}
+      PUBLIC_BASE_URL: ${file(.env.lambda):PUBLIC_BASE_URL, ''}
+      ALLOW_DIRECT_PAY_WITHOUT_ORDER: ${file(.env.lambda):ALLOW_DIRECT_PAY_WITHOUT_ORDER, 'false'}
+      ONBOARDING_TABLE_COUNT: ${file(.env.lambda):ONBOARDING_TABLE_COUNT, '20'}
 
-# Package configuration
-package:
-  exclude:
-    - .git/**
-    - .gitignore
-    - README.md
-    - package-lock.json
-    - .env
-    - .env.*
-    - node_modules/aws-sdk/**  # AWS SDK is provided by Lambda runtime
-    - testing_tools/**
-    - tests/**
-    - '**/*.test.js'
-    - '**/*.spec.js'
-    - uploads/ocr/**  # Exclude OCR files to reduce package size
-    - uploads/temp/**
-    - .wwebjs_cache/**
-    - '*.md'
-    - '*.txt'
-    - check-*.js
-    - test-*.js
-    - debug-*.js
-    - fix-*.js
-    - verify-*.js
-    - investigate-*.js
-    - quick-*.js
-    - final-*.js
-    - demo-*.js
-    - setup-*.js
-    - cleanup-*.js
-    - run-*.js
-    - '*.ps1'
-    - '*.sh'
-    - '*.bat'
-    - samconfig.toml
-
-# Plugins
-plugins:
-  - serverless-offline  # For local development
-  - serverless-dotenv-plugin  # For loading .env files
+# Package configuration removed - not compatible with container deployment
+# Plugins (removed incompatible plugins for container deployment)
+plugins: []
 
 # Custom configuration
 custom:
-  # Serverless offline configuration for local development
-  serverless-offline:
-    httpPort: 5000
-    host: 0.0.0.0
-    
-  # Environment-specific configurations
+  # Environment-specific configurations for memory and timeout
   stages:
     dev:
       memorySize: 512
@@ -158,13 +98,6 @@ custom:
     prod:
       memorySize: 1024
       timeout: 60
-      
-  # API Gateway configuration
-  apiGateway:
-    binaryMediaTypes:
-      - 'image/*'
-      - 'application/pdf'
-      - 'multipart/form-data'
 
 # Resources (optional - for creating additional AWS resources)
 resources:
@@ -177,16 +110,21 @@ resources:
         RetentionInDays: 14
         
   Outputs:
-    ApiGatewayRestApiId:
+    HttpApiId:
       Value:
-        Ref: ApiGatewayRestApi
+        Ref: HttpApi
       Export:
-        Name: ${self:service}-${self:provider.stage}-restApiId
+        Name: ${self:service}-${self:provider.stage}-httpApiId
         
-    ApiGatewayRestApiRootResourceId:
+    HttpApiUrl:
       Value:
-        Fn::GetAtt:
-          - ApiGatewayRestApi
-          - RootResourceId
+        Fn::Join:
+          - ''
+          - - 'https://'
+            - Ref: HttpApi
+            - '.execute-api.'
+            - ${aws:region}
+            - '.amazonaws.com/'
+            - ${self:provider.stage}
       Export:
-        Name: ${self:service}-${self:provider.stage}-rootResourceId
+        Name: ${self:service}-${self:provider.stage}-httpApiUrl
