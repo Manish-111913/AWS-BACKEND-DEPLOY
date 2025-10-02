@@ -185,6 +185,12 @@ run-*.js
 # Configuration files that might contain sensitive data
 samconfig.toml
 
+# Google Cloud credentials
+*.json
+!package*.json
+!serverless*.json
+inv-*.json
+
 # Generated documentation
 docs/generated/
 
