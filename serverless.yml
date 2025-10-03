@@ -22,7 +22,7 @@ provider:
         - 'http://localhost:3001' 
         - 'http://127.0.0.1:3000'
         - 'http://127.0.0.1:3001'
-        - 'https://menu-frontend-9327c.web.app'
+        - 'https://main.d2luvulypylagv.amplifyapp.com'
       allowedHeaders:
         - Content-Type
         - Authorization
@@ -58,9 +58,7 @@ provider:
 functions:
   api:
     image: qrbilling-backend # Refers to the image name under `ecr`
-    # Ensure Lambda architecture matches the image platform above
-    architectures:
-      - x86_64
+    # Architecture is determined by the Docker image platform (linux/amd64) set in ECR config above
     memorySize: ${self:custom.stages.${self:provider.stage}.memorySize}
     timeout: ${self:custom.stages.${self:provider.stage}.timeout}
     events:
@@ -71,19 +69,19 @@ functions:
           path: /
           method: ANY
     environment:
-      # Inject environment variables from .env.lambda file
       NODE_ENV: ${self:provider.stage}
-      DATABASE_URL: ${file(.env.lambda):DATABASE_URL, ''}
-      DB_HOST: ${file(.env.lambda):DB_HOST, ''}
-      DB_PORT: ${file(.env.lambda):DB_PORT, '5432'}
-      DB_NAME: ${file(.env.lambda):DB_NAME, ''}
-      DB_USER: ${file(.env.lambda):DB_USER, ''}
-      DB_PASSWORD: ${file(.env.lambda):DB_PASSWORD, ''}
-      JWT_SECRET: ${file(.env.lambda):JWT_SECRET, ''}
-      FRONTEND_REDIRECT_ORIGIN: ${file(.env.lambda):FRONTEND_REDIRECT_ORIGIN, 'https://menu-frontend-9327c.web.app'}
-      PUBLIC_BASE_URL: ${file(.env.lambda):PUBLIC_BASE_URL, ''}
-      ALLOW_DIRECT_PAY_WITHOUT_ORDER: ${file(.env.lambda):ALLOW_DIRECT_PAY_WITHOUT_ORDER, 'false'}
-      ONBOARDING_TABLE_COUNT: ${file(.env.lambda):ONBOARDING_TABLE_COUNT, '20'}
+      DATABASE_URL: ${env:DATABASE_URL}
+      RUNTIME_DATABASE_URL: ${env:RUNTIME_DATABASE_URL}
+      JWT_SECRET: ${env:JWT_SECRET}
+      FRONTEND_REDIRECT_ORIGIN: ${env:FRONTEND_REDIRECT_ORIGIN}
+      PUBLIC_BASE_URL: ${env:PUBLIC_BASE_URL, 'https://ofsmmmkot9.execute-api.ap-south-1.amazonaws.com/dev'}
+      API_BASE_URL: ${env:API_BASE_URL, 'https://ofsmmmkot9.execute-api.ap-south-1.amazonaws.com/dev'}
+      ALLOW_DIRECT_PAY_WITHOUT_ORDER: ${env:ALLOW_DIRECT_PAY_WITHOUT_ORDER, 'true'}
+      GOOGLE_VISION_API_KEY: ${env:GOOGLE_VISION_API_KEY}
+      # CRITICAL: Multi-tenancy deployment fix
+      STRICT_MULTI_TENANCY: false
+      DEFAULT_TENANT_ID: 1
+      VERBOSE_TENANT_LOGS: true
 
 # Package configuration removed - not compatible with container deployment
 # Plugins (removed incompatible plugins for container deployment)

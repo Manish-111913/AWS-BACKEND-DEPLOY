@@ -54,7 +54,8 @@ router.post('/generate', async (req, res) => {
     const errors = [];
 
     // Determine the frontend origin for anchor URLs
-    const frontendOrigin = process.env.FRONTEND_ORIGIN
+    const frontendOrigin = process.env.FRONTEND_REDIRECT_ORIGIN
+      || process.env.FRONTEND_ORIGIN
       || process.env.FRONTEND_BASE_URL
       || 'http://localhost:3000';
 

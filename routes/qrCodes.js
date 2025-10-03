@@ -87,7 +87,7 @@ router.post('/generate', async (req, res) => {
                         [businessId]
                 );
                         // Hosted frontend origin where scans should land
-                        const frontendOrigin = (process.env.FRONTEND_REDIRECT_ORIGIN || process.env.FRONTEND_ORIGIN || 'https://menu-frontend-9327c.web.app').replace(/\/$/, '');
+                        const frontendOrigin = (process.env.FRONTEND_REDIRECT_ORIGIN || process.env.FRONTEND_ORIGIN || 'https://main.d2luvulypylagv.amplifyapp.com/').replace(/\/$/, '');
         
         const generatedQRs = [];
         const errors = [];
@@ -444,7 +444,7 @@ router.post('/rebuild-anchors', async (req, res) => {
             console.warn('⚠️ Failed to set tenant GUC in /api/qr/rebuild-anchors:', e.message);
         }
 
-    const frontendOrigin = (process.env.FRONTEND_REDIRECT_ORIGIN || process.env.FRONTEND_ORIGIN || 'https://menu-frontend-9327c.web.app').replace(/\/$/, '');
+    const frontendOrigin = (process.env.FRONTEND_REDIRECT_ORIGIN || process.env.FRONTEND_ORIGIN || 'https://main.d2luvulypylagv.amplifyapp.com/').replace(/\/$/, '');
         const rows = (await client.query(
             `SELECT id, qr_id, table_number FROM qr_codes WHERE business_id = $1`,
             [businessId]
@@ -501,7 +501,7 @@ router.post('/sync-config', async (req, res) => {
             await client.query("SELECT set_config('app.current_business_id', $1, true)", [String(businessId)]);
         } catch (e) { console.warn('sync-config set_config failed', e.message); }
 
-        const frontendOrigin = (process.env.FRONTEND_REDIRECT_ORIGIN || process.env.FRONTEND_ORIGIN || 'https://menu-frontend-9327c.web.app').replace(/\/$/, '');
+        const frontendOrigin = (process.env.FRONTEND_REDIRECT_ORIGIN || process.env.FRONTEND_ORIGIN || 'https://main.d2luvulypylagv.amplifyapp.com/').replace(/\/$/, '');
         const existingRes = await client.query(`SELECT id, qr_id, table_number, is_active, anchor_url FROM qr_codes WHERE business_id = $1`, [businessId]);
         const existingByTable = new Map(existingRes.rows.map(r => [String(r.table_number), r]));
         const desiredTables = tables.map(t => {

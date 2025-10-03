@@ -56,7 +56,14 @@ const PORT = process.env.PORT || 5000;
 app.use(helmet());
 // CORS configuration
 const corsOptions = {
-  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://127.0.0.1:3000', 'http://127.0.0.1:3001'],
+  origin: [
+    'http://localhost:3000', 
+    'http://localhost:3001', 
+    'http://127.0.0.1:3000', 
+    'http://127.0.0.1:3001',
+    'https://main.d2luvulypylagv.amplifyapp.com',
+    process.env.FRONTEND_REDIRECT_ORIGIN
+  ].filter(Boolean), // Remove any undefined values
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   // Allow custom tenant headers for multi-tenancy enforcement
@@ -82,7 +89,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => next());
 
 // QR scan redirect (public)
-const FRONTEND_REDIRECT_ORIGIN = process.env.FRONTEND_REDIRECT_ORIGIN || 'https://menu-frontend-9327c.web.app';
+const FRONTEND_REDIRECT_ORIGIN = process.env.FRONTEND_REDIRECT_ORIGIN || 'https://main.d2luvulypylagv.amplifyapp.com/';
 app.get('/qr/:qrId', async (req, res) => {
   const { qrId } = req.params;
   try {
