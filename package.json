@@ -50,9 +50,7 @@
   },
   "devDependencies": {
     "jest": "^29.7.0",
-    "nodemon": "^3.1.10",
-    "serverless-dotenv-plugin": "^6.0.0",
-    "serverless-offline": "^14.4.0"
+    "nodemon": "^3.1.10"
   },
   "keywords": [
     "inventory",

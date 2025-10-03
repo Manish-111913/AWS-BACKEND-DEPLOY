@@ -1,24 +1,17 @@
 # Use the official AWS Lambda Node.js base image
-# This image includes the Node.js runtime and the Lambda Runtime Interface Client
 FROM public.ecr.aws/lambda/nodejs:20
 
-# Set the working directory inside the container
-WORKDIR /usr/app
+# Set the working directory to Lambda's task root
+WORKDIR ${LAMBDA_TASK_ROOT}
 
-# Copy package.json and package-lock.json to the container
+# Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --omit=dev
+# Install only production dependencies
+RUN npm ci --omit=dev --cache /tmp/.npm
 
-# Copy the rest of your backend code into the container
+# Copy application code
 COPY . .
 
-# Use a build-time argument for your .env.lambda file
-ARG ENV_FILE=.env.lambda
-# Copy the specific environment file into the container (optional - better to use env vars)
-# COPY ${ENV_FILE} ./.env.lambda
-
-# Define the command to start the application
-# This tells Lambda to run your server.handler, which uses serverless-http
+# Set the CMD to your handler
 CMD ["server.handler"]

@@ -10,7 +10,33 @@ provider:
       qrbilling-backend:
         path: ./
         file: Dockerfile
+        # Force a single-arch Docker image build so Lambda doesn't receive a manifest list/OCI media type
+        # Supported values: linux/amd64 or linux/arm64 (must match function architecture below)
         platform: linux/amd64
+  
+  # HTTP API CORS configuration
+  httpApi:
+    cors:
+      allowedOrigins:
+        - 'http://localhost:3000'
+        - 'http://localhost:3001' 
+        - 'http://127.0.0.1:3000'
+        - 'http://127.0.0.1:3001'
+        - 'https://menu-frontend-9327c.web.app'
+      allowedHeaders:
+        - Content-Type
+        - Authorization
+        - Cache-Control
+        - X-Tenant-Id
+        - X-Business-Id
+      allowedMethods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+        - PATCH
+      allowCredentials: true
   
   # IAM permissions for Lambda function
   iam:
@@ -29,34 +55,12 @@ provider:
             - secretsmanager:GetSecretValue
           Resource: 'arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:qrbilling/*'
 
-# HTTP API CORS configuration (Global level)
-# This is correctly configured to apply to all routes
-httpApi:
-  cors:
-    allowedOrigins:
-      - 'http://localhost:3000'
-      - 'http://localhost:3001' 
-      - 'http://127.0.0.1:3000'
-      - 'http://127.0.0.1:3001'
-      - 'https://menu-frontend-9327c.web.app'
-    allowedHeaders:
-      - Content-Type
-      - Authorization
-      - Cache-Control
-      - X-Tenant-Id
-      - X-Business-Id
-    allowedMethods:
-      - GET
-      - POST
-      - PUT
-      - DELETE
-      - OPTIONS
-      - PATCH
-    allowCredentials: true
-
 functions:
   api:
     image: qrbilling-backend # Refers to the image name under `ecr`
+    # Ensure Lambda architecture matches the image platform above
+    architectures:
+      - x86_64
     memorySize: ${self:custom.stages.${self:provider.stage}.memorySize}
     timeout: ${self:custom.stages.${self:provider.stage}.timeout}
     events:
