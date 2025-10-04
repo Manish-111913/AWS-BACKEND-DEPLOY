@@ -1268,6 +1268,8 @@ app.get('/api/qr/list', async (req, res) => {
     const businessId = parseInt(req.query.businessId || '1', 10);
     if (!businessId) return res.status(400).json({ error: 'businessId required' });
     const includePng = String(req.query.includePng||'0') === '1';
+    const generateMissing = String(req.query.generateMissing||'0') === '1';
+    const tablesParam = req.query.tables ? String(req.query.tables) : '';
     const hostHeader = req.headers.host || `localhost:${PORT}`;
     let base = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${hostHeader}`).replace(/\/$/, '');
     if (!process.env.PUBLIC_BASE_URL && /^(https?:\/\/)?(localhost|127\.|0\.0\.0\.0)/i.test(base)) {
@@ -1281,6 +1283,23 @@ app.get('/api/qr/list', async (req, res) => {
         }
       } catch(_) {}
     }
+    // Optionally ensure specified table_numbers exist in qr_codes (compatibility path for deployments without /qr/bulk-generate)
+    if (generateMissing && tablesParam) {
+      const desired = Array.from(new Set(tablesParam.split(',').map(s=>String(s).trim()).filter(Boolean)));
+      for (const t of desired) {
+        try {
+          const existing = await pool.query(`SELECT id, qr_id FROM qr_codes WHERE business_id=$1 AND table_number=$2 LIMIT 1`, [businessId, t]);
+          if (!existing.rows.length) {
+            await pool.query(`INSERT INTO qr_codes (business_id, table_number, is_active, qr_id) VALUES ($1,$2,TRUE, LEFT(MD5(RANDOM()::text||NOW()::text),10))`, [businessId, t]);
+          } else if (!existing.rows[0].qr_id) {
+            await pool.query(`UPDATE qr_codes SET qr_id=LEFT(MD5(RANDOM()::text||NOW()::text),10) WHERE id=$1`, [existing.rows[0].id]);
+          }
+        } catch(eEnsure) {
+          console.warn('qr/list ensure failed for table', t, eEnsure.message);
+        }
+      }
+    }
+
     let modernRows = (await pool.query(`SELECT id, table_number, qr_id, business_id, is_active FROM qr_codes WHERE business_id=$1`, [businessId])).rows;
     let migrated = false;
     // If no modern rows, attempt migration from legacy QRCodes
