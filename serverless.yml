@@ -23,12 +23,17 @@ provider:
         - 'http://127.0.0.1:3000'
         - 'http://127.0.0.1:3001'
         - 'https://main.d2luvulypylagv.amplifyapp.com'
+        - 'https://menu-frontend-9327c.web.app'
+        - 'https://menu-backend-tk9a.onrender.com'
       allowedHeaders:
         - Content-Type
         - Authorization
         - Cache-Control
         - X-Tenant-Id
         - X-Business-Id
+        - Accept
+        - Origin
+        - X-Requested-With
       allowedMethods:
         - GET
         - POST
@@ -36,6 +41,7 @@ provider:
         - DELETE
         - OPTIONS
         - PATCH
+        - HEAD
       allowCredentials: true
   
   # IAM permissions for Lambda function
@@ -53,7 +59,16 @@ provider:
           Action:
             - ssm:GetParameter
             - secretsmanager:GetSecretValue
-          Resource: 'arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:qrbilling/*'
+          Resource: 
+            - 'arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:qrbilling/*'
+            - 'arn:aws:ssm:${aws:region}:${aws:accountId}:parameter/qrbilling/*'
+        # Grant permissions for S3 (if needed for file uploads)
+        - Effect: Allow
+          Action:
+            - s3:GetObject
+            - s3:PutObject
+            - s3:DeleteObject
+          Resource: 'arn:aws:s3:::qrbilling-*/*'
 
 functions:
   api:
@@ -70,15 +85,30 @@ functions:
           method: ANY
     environment:
       NODE_ENV: ${self:provider.stage}
+      # Database Configuration
       DATABASE_URL: ${env:DATABASE_URL}
       RUNTIME_DATABASE_URL: ${env:RUNTIME_DATABASE_URL}
+      # Security
       JWT_SECRET: ${env:JWT_SECRET}
+      # Frontend Configuration  
       FRONTEND_REDIRECT_ORIGIN: ${env:FRONTEND_REDIRECT_ORIGIN}
+      FRONTEND_MENU_ORIGIN: 'https://menu-frontend-9327c.web.app/'
+      # API Configuration
       PUBLIC_BASE_URL: ${env:PUBLIC_BASE_URL, 'https://ofsmmmkot9.execute-api.ap-south-1.amazonaws.com/dev'}
       API_BASE_URL: ${env:API_BASE_URL, 'https://ofsmmmkot9.execute-api.ap-south-1.amazonaws.com/dev'}
       ALLOW_DIRECT_PAY_WITHOUT_ORDER: ${env:ALLOW_DIRECT_PAY_WITHOUT_ORDER, 'true'}
+      ONBOARDING_TABLE_COUNT: ${env:ONBOARDING_TABLE_COUNT, '20'}
+      # Google Services
       GOOGLE_VISION_API_KEY: ${env:GOOGLE_VISION_API_KEY}
-      # CRITICAL: Multi-tenancy deployment fix
+      GOOGLE_APPLICATION_CREDENTIALS: ${env:GOOGLE_APPLICATION_CREDENTIALS}
+      # MongoDB Atlas Configuration
+      MONGODB_URI: ${env:MONGODB_URI}
+      MONGODB_DB: ${env:MONGODB_DB, 'invexis_media'}
+      MONGODB_BUCKET: ${env:MONGODB_BUCKET, 'images'}
+      # Google Cloud Storage Configuration
+      GCS_BUCKET: ${env:GCS_BUCKET, 'my-invexis-images'}
+      IMAGE_CDN_BASE: ${env:IMAGE_CDN_BASE, 'https://storage.googleapis.com/my-invexis-images'}
+      # Multi-tenancy Configuration
       STRICT_MULTI_TENANCY: false
       DEFAULT_TENANT_ID: 1
       VERBOSE_TENANT_LOGS: true
