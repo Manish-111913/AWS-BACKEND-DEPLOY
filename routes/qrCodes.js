@@ -81,13 +81,13 @@ router.post('/generate', async (req, res) => {
             });
         }
         
-        // Get base URL from settings
-                const settingsResult = await client.query(
-                        'SELECT base_url FROM qr_settings WHERE business_id = $1',
-                        [businessId]
-                );
-                        // Hosted frontend origin where scans should land
-                        const frontendOrigin = (process.env.FRONTEND_REDIRECT_ORIGIN || process.env.FRONTEND_ORIGIN || 'https://main.d2luvulypylagv.amplifyapp.com/').replace(/\/$/, '');
+    // Get base URL from settings (kept for future use)
+    const settingsResult = await client.query(
+        'SELECT base_url FROM qr_settings WHERE business_id = $1',
+        [businessId]
+    );
+    // Public backend origin where scanner is hosted
+    const backendOrigin = (process.env.BACKEND_PUBLIC_ORIGIN || process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
         
         const generatedQRs = [];
         const errors = [];
@@ -111,8 +111,10 @@ router.post('/generate', async (req, res) => {
                 
                 // Generate unique QR ID
                 const qrId = generateQRId();
-                // Direct link to hosted app with metadata for context
-                const anchorUrl = `${frontendOrigin}/?qrId=${qrId}&table=${encodeURIComponent(tableNumber)}&businessId=${businessId}`;
+                                // Direct link to backend scanner; backend will create session and redirect to menu app
+                                const anchorUrl = backendOrigin
+                                    ? `${backendOrigin}/qr/${qrId}`
+                                    : `${req.protocol}://${req.headers.host}/qr/${qrId}`;
                 
                 // Insert into database
                 const insertResult = await client.query(`
@@ -444,7 +446,7 @@ router.post('/rebuild-anchors', async (req, res) => {
             console.warn('⚠️ Failed to set tenant GUC in /api/qr/rebuild-anchors:', e.message);
         }
 
-    const frontendOrigin = (process.env.FRONTEND_REDIRECT_ORIGIN || process.env.FRONTEND_ORIGIN || 'https://main.d2luvulypylagv.amplifyapp.com/').replace(/\/$/, '');
+        const backendOrigin = (process.env.BACKEND_PUBLIC_ORIGIN || process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
         const rows = (await client.query(
             `SELECT id, qr_id, table_number FROM qr_codes WHERE business_id = $1`,
             [businessId]
@@ -452,7 +454,9 @@ router.post('/rebuild-anchors', async (req, res) => {
 
         const updates = [];
         for (const r of rows) {
-            const anchor = `${frontendOrigin}/?qrId=${r.qr_id}&table=${encodeURIComponent(r.table_number)}&businessId=${businessId}`;
+                        const anchor = backendOrigin
+                            ? `${backendOrigin}/qr/${r.qr_id}`
+                            : `${req.protocol}://${req.headers.host}/qr/${r.qr_id}`;
             await client.query(`UPDATE qr_codes SET anchor_url = $1 WHERE id = $2`, [anchor, r.id]);
             updates.push({ id: r.id, qr_id: r.qr_id, table_number: r.table_number, anchor_url: anchor });
         }
@@ -501,7 +505,7 @@ router.post('/sync-config', async (req, res) => {
             await client.query("SELECT set_config('app.current_business_id', $1, true)", [String(businessId)]);
         } catch (e) { console.warn('sync-config set_config failed', e.message); }
 
-        const frontendOrigin = (process.env.FRONTEND_REDIRECT_ORIGIN || process.env.FRONTEND_ORIGIN || 'https://main.d2luvulypylagv.amplifyapp.com/').replace(/\/$/, '');
+    const backendOrigin = (process.env.BACKEND_PUBLIC_ORIGIN || process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
         const existingRes = await client.query(`SELECT id, qr_id, table_number, is_active, anchor_url FROM qr_codes WHERE business_id = $1`, [businessId]);
         const existingByTable = new Map(existingRes.rows.map(r => [String(r.table_number), r]));
         const desiredTables = tables.map(t => {
@@ -532,7 +536,9 @@ router.post('/sync-config', async (req, res) => {
                 }
             } else {
                 const qrId = generateQRId();
-                const anchorUrl = `${frontendOrigin}/?qrId=${qrId}&table=${encodeURIComponent(dt.table_number)}&businessId=${businessId}`;
+                                const anchorUrl = backendOrigin
+                                    ? `${backendOrigin}/qr/${qrId}`
+                                    : `${req.protocol}://${req.headers.host}/qr/${qrId}`;
                 const ins = await client.query(`
                     INSERT INTO qr_codes (qr_id, table_number, business_id, anchor_url, is_active, created_by)
                     VALUES ($1,$2,$3,$4,TRUE,$5)

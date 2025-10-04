@@ -62,7 +62,9 @@ const corsOptions = {
     'http://127.0.0.1:3000', 
     'http://127.0.0.1:3001',
     'https://main.d2luvulypylagv.amplifyapp.com',
-    process.env.FRONTEND_REDIRECT_ORIGIN
+    process.env.FRONTEND_REDIRECT_ORIGIN,
+    process.env.FRONTEND_MENU_ORIGIN,
+    'https://menu-frontend-9327c.web.app'
   ].filter(Boolean), // Remove any undefined values
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -89,6 +91,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => next());
 
 // QR scan redirect (public)
+// Prefer public Menu app; fall back to legacy redirect origin
+const FRONTEND_MENU_ORIGIN = process.env.FRONTEND_MENU_ORIGIN || process.env.PUBLIC_MENU_BASE_URL || null;
 const FRONTEND_REDIRECT_ORIGIN = process.env.FRONTEND_REDIRECT_ORIGIN || 'https://main.d2luvulypylagv.amplifyapp.com/';
 app.get('/qr/:qrId', async (req, res) => {
   const { qrId } = req.params;
@@ -101,10 +105,12 @@ app.get('/qr/:qrId', async (req, res) => {
     );
     const row = rows[0];
     if (!row) {
-      const fallbackNF = `${FRONTEND_REDIRECT_ORIGIN}/?qrId=${encodeURIComponent(qrId)}&notFound=1`;
+      const baseNF = (FRONTEND_MENU_ORIGIN || FRONTEND_REDIRECT_ORIGIN).replace(/\/$/, '');
+      const fallbackNF = `${baseNF}/?qrId=${encodeURIComponent(qrId)}&notFound=1`;
       return res.redirect(302, fallbackNF);
     }
-    const target = new URL(FRONTEND_REDIRECT_ORIGIN);
+    const chosen = FRONTEND_MENU_ORIGIN || FRONTEND_REDIRECT_ORIGIN;
+    const target = new URL(chosen);
     target.searchParams.set('qrId', qrId);
     if (row.table_number) target.searchParams.set('table', row.table_number);
     if (row.business_id) target.searchParams.set('businessId', String(row.business_id));
@@ -148,11 +154,12 @@ app.get('/qr/:qrId', async (req, res) => {
       }
     }
 
-    console.log('[QR-SCAN] redirecting qrId=%s elapsed=%dms', qrId, Date.now()-scanStartTs);
+    console.log('[QR-SCAN] redirecting qrId=%s to=%s elapsed=%dms', qrId, target.toString(), Date.now()-scanStartTs);
     return res.redirect(302, target.toString());
   } catch (e) {
     console.error('[QR-SCAN] ERROR qrId=%s msg=%s', qrId, e.message);
-    const fallback = `${FRONTEND_REDIRECT_ORIGIN}/?qrId=${encodeURIComponent(qrId)}&lookupError=1`;
+    const baseErr = (FRONTEND_MENU_ORIGIN || FRONTEND_REDIRECT_ORIGIN).replace(/\/$/, '');
+    const fallback = `${baseErr}/?qrId=${encodeURIComponent(qrId)}&lookupError=1`;
     return res.redirect(302, fallback);
   }
 });
