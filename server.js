@@ -1289,7 +1289,7 @@ app.post('/api/qr/mark-paid', async (req, res) => {
 // Creates (or reuses active) modern dining_session, inserts a session_orders row with aggregated basic fields.
 app.post('/api/checkout', async (req, res) => {
   try {
-    const { businessId: rawBiz, tableNumber, qrId, items, payNow } = req.body || {};
+  const { businessId: rawBiz, tableNumber, qrId, items, payNow } = req.body || {};
     const businessId = parseInt(rawBiz || '1',10);
     if (!businessId) return res.status(400).json({ error:'businessId required'});
     if (!tableNumber && !qrId) return res.status(400).json({ error:'tableNumber or qrId required'});
@@ -1359,6 +1359,58 @@ app.post('/api/checkout', async (req, res) => {
       orderId = insOrder.rows[0].id; orderPaymentStatus = insOrder.rows[0].payment_status;
     } catch(e) { /* schema diff tolerant */ }
 
+    // --- ALSO create legacy Orders + OrderItems so Owner views reflect totals/items ---
+    // Resolve a session UUID compatible with Orders.dining_session_id (modern joins expect dining_sessions.session_id)
+    let sessionUUID = null;
+    try {
+      const r = await pool.query(`SELECT session_id FROM dining_sessions WHERE id=$1 LIMIT 1`, [sessionId]);
+      sessionUUID = r.rows[0]?.session_id || null;
+    } catch(_) { sessionUUID = null; }
+    if (!sessionUUID) {
+      // Assign one if missing (some deployments lack session_id). Best-effort.
+      try {
+        const gen = 'S'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+        await pool.query(`UPDATE dining_sessions SET session_id=$1 WHERE id=$2`, [gen, sessionId]);
+        sessionUUID = gen;
+      } catch(_) { /* ignore */ }
+    }
+
+    let legacyOrderId = null;
+    try {
+      if (sessionUUID) {
+        const ord = await pool.query(
+          `INSERT INTO Orders (business_id, dining_session_id, status, customer_prep_time_minutes, payment_status, placed_at, created_at, updated_at)
+           VALUES ($1,$2,$3,15,$4,NOW(),NOW(),NOW()) RETURNING order_id`,
+          [businessId, sessionUUID, (payNow ? 'COMPLETED' : 'PLACED'), (payNow ? 'paid' : 'unpaid')]
+        );
+        legacyOrderId = ord.rows[0]?.order_id || null;
+      }
+    } catch (eOrd) {
+      console.warn('[checkout] legacy Orders insert failed:', eOrd.message);
+    }
+
+    if (legacyOrderId && Array.isArray(items) && items.length) {
+      for (const it of items) {
+        try {
+          const qty = Math.max(1, parseInt(it.quantity || 1, 10));
+          const name = (it.name || '').trim();
+          const explicitId = it.menuItemId != null ? parseInt(it.menuItemId,10) : (it.id != null ? parseInt(it.id,10) : null);
+          let menuId = Number.isFinite(explicitId) ? explicitId : null;
+          if (!menuId && name) {
+            const m = await pool.query(`SELECT menu_item_id FROM MenuItems WHERE business_id=$1 AND LOWER(name)=LOWER($2) LIMIT 1`, [businessId, name]);
+            if (m.rows[0]) menuId = m.rows[0].menu_item_id;
+          }
+          if (!menuId) { continue; } // skip if we cannot resolve a menu item
+          for (let i=0;i<qty;i++) {
+            await pool.query(`INSERT INTO OrderItems (order_id, menu_item_id, item_status, business_id, created_at, updated_at)
+                              VALUES ($1,$2,'QUEUED',$3,NOW(),NOW())`, [legacyOrderId, menuId, businessId]);
+          }
+        } catch (iErr) {
+          console.warn('[checkout] OrderItems insert failed (non-fatal):', iErr.message);
+        }
+      }
+    }
+
     // If payNow, mark session paid (best-effort) & compute color result
     let color = 'yellow';
     if (payNow) {
@@ -1366,6 +1418,10 @@ app.post('/api/checkout', async (req, res) => {
         await pool.query(`UPDATE dining_sessions SET payment_status='paid', last_activity=NOW() WHERE id=$1`, [sessionId]);
         sessionPaymentStatus = 'paid';
       } catch(_e) {}
+      // Also mark legacy order paid if created
+      if (legacyOrderId) {
+        try { await pool.query(`UPDATE Orders SET payment_status='paid', status='COMPLETED', updated_at=NOW() WHERE order_id=$1`, [legacyOrderId]); } catch(_ignore) {}
+      }
       // Determine color: paid => green, else yellow (basic logic here; overview endpoint has richer rules)
       color = 'green';
     }
@@ -1424,11 +1480,46 @@ app.post('/api/checkout', async (req, res) => {
       } catch(_e2) {}
     }
 
-    return res.json({ success:true, sessionId, orderId, qrId: qrIdFinal, tableNumber: resolvedTable, total, paymentStatus: sessionPaymentStatus, orderPaymentStatus, color, paid: sessionPaymentStatus==='paid' });
+    return res.json({ success:true, sessionId, orderId, legacyOrderId, qrId: qrIdFinal, tableNumber: resolvedTable, total, paymentStatus: sessionPaymentStatus, orderPaymentStatus, color, paid: sessionPaymentStatus==='paid' });
   } catch(e) {
     console.error('POST /api/checkout error:', e);
     return res.status(500).json({ error:'Checkout failed'});
   }
+});
+
+// --- Diagnostics: Reset tenant data for QR testing (DANGEROUS) ---
+// POST /api/diagnostics/reset-tenant { businessId, includeQr? } -> deletes Orders/OrderItems, session_orders, dining_sessions, qr_scans; optionally qr_codes and legacy tables
+app.post('/api/diagnostics/reset-tenant', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const biz = parseInt(req.body?.businessId || req.query.businessId || '0',10);
+    const includeQr = String(req.body?.includeQr || req.query.includeQr || '0') === '1';
+    if (!biz) return res.status(400).json({ error:'businessId required' });
+    await client.query('BEGIN');
+    const out = { businessId: biz };
+    // Sales
+    try { await client.query(`DELETE FROM SaleLineItems WHERE sale_id IN (SELECT sale_id FROM SalesTransactions WHERE business_id=$1)`, [biz]); } catch(_) {}
+    try { out.sales = (await client.query(`DELETE FROM SalesTransactions WHERE business_id=$1`, [biz])).rowCount; } catch(_) {}
+    // Legacy orders
+    try { await client.query(`DELETE FROM OrderItems WHERE order_id IN (SELECT order_id FROM Orders WHERE business_id=$1)`, [biz]); } catch(_) {}
+    try { out.orders = (await client.query(`DELETE FROM Orders WHERE business_id=$1`, [biz])).rowCount; } catch(_) {}
+    // Modern sessions & orders
+    try { out.session_orders = (await client.query(`DELETE FROM session_orders WHERE session_id IN (SELECT ds.id FROM dining_sessions ds JOIN qr_codes qc ON qc.id=ds.qr_code_id WHERE qc.business_id=$1)`, [biz])).rowCount; } catch(_) {}
+    try { out.qr_scans = (await client.query(`DELETE FROM qr_scans WHERE qr_code_id IN (SELECT id FROM qr_codes WHERE business_id=$1)`, [biz])).rowCount; } catch(_) {}
+    try { out.dining_sessions = (await client.query(`DELETE FROM dining_sessions WHERE qr_code_id IN (SELECT id FROM qr_codes WHERE business_id=$1)`, [biz])).rowCount; } catch(_) {}
+    // Legacy sessions
+    try { out.legacy_sessions = (await client.query(`DELETE FROM DiningSessions WHERE qr_code_id IN (SELECT qr_code_id FROM QRCodes WHERE business_id=$1)`, [biz])).rowCount; } catch(_) {}
+    if (includeQr) {
+      try { out.qr_codes = (await client.query(`DELETE FROM qr_codes WHERE business_id=$1`, [biz])).rowCount; } catch(_) {}
+      try { out.legacy_qrcodes = (await client.query(`DELETE FROM QRCodes WHERE business_id=$1`, [biz])).rowCount; } catch(_) {}
+    }
+    await client.query('COMMIT');
+    return res.json({ success:true, cleared: out, note: includeQr ? 'QR codes removed too' : 'QR codes kept' });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch(_){ }
+    console.error('reset-tenant error', err);
+    return res.status(500).json({ error:'failed to reset tenant', detail: err.message });
+  } finally { client.release(); }
 });
 
 // --- Diagnostics: Table State (modern + legacy) ---
