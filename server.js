@@ -262,11 +262,15 @@ app.get('/api/qr/scan-urls', async (req, res) => {
 // Body: { businessId, tables: ["1","2",...], includePng (optional boolean) }
 // Returns: { businessId, count, base, qrs: [{ table_number, qr_id, scan_url, png? }] }
 app.post('/api/qr/bulk-generate', async (req, res) => {
+  const client = await pool.connect();
   try {
     const { businessId: rawBiz, tables, includePng = true } = req.body || {};
     const businessId = parseInt(rawBiz || req.query.businessId || '1', 10);
     if (!businessId) return res.status(400).json({ error: 'businessId required' });
     if (!Array.isArray(tables) || !tables.length) return res.status(400).json({ error: 'tables array required' });
+    // Establish tenant context for RLS (if enabled)
+    try { await client.query("SELECT set_config('app.current_business_id', $1, true)", [String(businessId)]); } catch(_) {}
+    try { await client.query("SELECT set_config('app.current_tenant', $1, true)", [String(businessId)]); } catch(_) {}
     const hostHeader = req.headers.host || `localhost:${PORT}`;
     let base = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${hostHeader}`).replace(/\/$/, '');
     // If base resolves to localhost or 127.x and no PUBLIC_BASE_URL provided, attempt LAN IP detection
@@ -290,11 +294,11 @@ app.post('/api/qr/bulk-generate', async (req, res) => {
       const tableNumber = String(t).trim();
       if (!tableNumber) continue;
       // Try find existing row
-      let rowRes = await pool.query(`SELECT id, table_number, qr_id, business_id FROM qr_codes WHERE business_id=$1 AND table_number=$2 LIMIT 1`, [businessId, tableNumber]);
+      let rowRes = await client.query(`SELECT id, table_number, qr_id, business_id FROM qr_codes WHERE business_id=$1 AND table_number=$2 LIMIT 1`, [businessId, tableNumber]);
       let row = rowRes.rows[0];
       if (!row) {
         // Insert new
-        rowRes = await pool.query(
+        rowRes = await client.query(
           `INSERT INTO qr_codes (business_id, table_number, is_active, qr_id)
            VALUES ($1,$2,TRUE, LEFT(MD5(RANDOM()::text || NOW()::text),10))
            RETURNING id, table_number, qr_id, business_id`,
@@ -302,7 +306,7 @@ app.post('/api/qr/bulk-generate', async (req, res) => {
         );
         row = rowRes.rows[0];
       } else if (!row.qr_id) {
-        const regen = await pool.query(
+        const regen = await client.query(
           `UPDATE qr_codes SET qr_id = LEFT(MD5(RANDOM()::text || NOW()::text),10) WHERE id=$1 RETURNING qr_id`,
           [row.id]
         );
@@ -325,7 +329,9 @@ app.post('/api/qr/bulk-generate', async (req, res) => {
     return res.json({ businessId, count: results.length, base, qrs: results });
   } catch (e) {
     console.error('POST /api/qr/bulk-generate error:', e);
-    return res.status(500).json({ error: 'Failed to bulk generate' });
+    return res.status(500).json({ error: 'Failed to bulk generate', detail: e.message, code: e.code || null });
+  } finally {
+    try { client.release(); } catch(_) {}
   }
 });
 
@@ -470,7 +476,7 @@ app.get('/api/sessions/overview', async (req, res) => {
       while(numericKeys.length && numericKeys[numericKeys.length-1]>onboardingClamp) numericKeys.pop();
     }
 
-    // --- Compute totals for both legacy and modern sessions ---
+  // --- Compute totals for both legacy and modern sessions ---
     const legacySessionIds = rows.filter(r => r.session_id && Number(r.session_id) > 0).map(r => Number(r.session_id));
     const modernSessionIds = rows.filter(r => r.session_id && Number(r.session_id) < 0).map(r => Math.abs(Number(r.session_id)));
 
@@ -529,6 +535,69 @@ app.get('/api/sessions/overview', async (req, res) => {
       } catch(_ignoreM) { /* session_orders may not exist */ }
     }
 
+    // Legacy totals by table_number from the latest legacy DiningSessions, used as a fallback when dedup picks modern
+    // or when per-session totals are unavailable. Prefer Orders.total_amount; fallback to item aggregates.
+    const totalsLegacyByTable = new Map();
+    try {
+      const qLT = await pool.query(
+        `WITH latest_legacy AS (
+           SELECT q.table_number::text AS table_number, MAX(ds.session_id)::bigint AS session_id
+             FROM QRCodes q
+             JOIN DiningSessions ds ON ds.qr_code_id = q.qr_code_id
+            WHERE q.business_id = $1
+            GROUP BY q.table_number
+         )
+         SELECT l.table_number, COALESCE(SUM(o.total_amount),0)::numeric AS total
+           FROM latest_legacy l
+           LEFT JOIN Orders o ON o.dining_session_id = l.session_id
+          GROUP BY l.table_number`,
+        [businessId]
+      );
+      for (const r of qLT.rows) totalsLegacyByTable.set(String(r.table_number), Number(r.total));
+    } catch(_eLT) {
+      // Fallback to unit_price
+      try {
+        const qLT2 = await pool.query(
+          `WITH latest_legacy AS (
+             SELECT q.table_number::text AS table_number, MAX(ds.session_id)::bigint AS session_id
+               FROM QRCodes q
+               JOIN DiningSessions ds ON ds.qr_code_id = q.qr_code_id
+              WHERE q.business_id = $1
+              GROUP BY q.table_number
+           )
+           SELECT l.table_number,
+                  COALESCE(SUM(COALESCE(oi.quantity,1) * COALESCE(oi.unit_price,0)),0)::numeric AS total
+             FROM latest_legacy l
+             JOIN Orders o ON o.dining_session_id = l.session_id
+             JOIN OrderItems oi ON oi.order_id = o.order_id
+            GROUP BY l.table_number`,
+          [businessId]
+        );
+        for (const r of qLT2.rows) totalsLegacyByTable.set(String(r.table_number), Number(r.total));
+      } catch(_eLT2) {
+        // Fallback to price
+        try {
+          const qLT3 = await pool.query(
+            `WITH latest_legacy AS (
+               SELECT q.table_number::text AS table_number, MAX(ds.session_id)::bigint AS session_id
+                 FROM QRCodes q
+                 JOIN DiningSessions ds ON ds.qr_code_id = q.qr_code_id
+                WHERE q.business_id = $1
+                GROUP BY q.table_number
+             )
+             SELECT l.table_number,
+                    COALESCE(SUM(COALESCE(oi.quantity,1) * COALESCE(oi.price,0)),0)::numeric AS total
+               FROM latest_legacy l
+               JOIN Orders o ON o.dining_session_id = l.session_id
+               JOIN OrderItems oi ON oi.order_id = o.order_id
+              GROUP BY l.table_number`,
+            [businessId]
+          );
+          for (const r of qLT3.rows) totalsLegacyByTable.set(String(r.table_number), Number(r.total));
+        } catch(_eLT3) { /* leave empty if all fail */ }
+      }
+    }
+
     const output = [];
     for (let t=1; t<=desiredTotal; t++) {
       const row = numericMap.get(t);
@@ -545,10 +614,16 @@ app.get('/api/sessions/overview', async (req, res) => {
       const anyReady = row.any_ready_order || row.any_item_completed;
       // Resolve total amount for this session/table
       let totalAmount = 0;
-      if (row.session_id) {
+      if (row && row.session_id) {
         const sidNum = Number(row.session_id);
         if (sidNum > 0) totalAmount = totalsLegacy.get(sidNum) || 0;
         else if (sidNum < 0) totalAmount = totalsModern.get(Math.abs(sidNum)) || 0;
+      }
+      // Fallback: if modern or zero, use the latest legacy total for this table number
+      if (!totalAmount || Number.isNaN(totalAmount)) {
+        const tb = row ? String(row.table_number) : String(t);
+        const fb = totalsLegacyByTable.get(tb);
+        if (typeof fb === 'number' && fb > 0) totalAmount = fb;
       }
       let color = 'ash';
       let reason = 'no active session';
