@@ -1284,9 +1284,10 @@ app.post('/api/qr/mark-paid', async (req, res) => {
   }
 });
 
-// --- Checkout (creates session order prior to payment) ---
-// Body: { businessId, tableNumber, qrId, items:[{name, quantity, price, menuItemId?}] }
-// Creates (or reuses active) modern dining_session, inserts a session_orders row with aggregated basic fields.
+// --- Checkout (creates session + orders + items) ---
+// Body: { businessId, tableNumber, qrId, items:[{name, quantity, price, menuItemId?}], payNow? }
+// Ensures: modern dining_sessions row (active), legacy DiningSessions row (active),
+//          then inserts Orders + OrderItems in legacy schema so Owner view reflects totals/items.
 app.post('/api/checkout', async (req, res) => {
   try {
   const { businessId: rawBiz, tableNumber, qrId, items, payNow } = req.body || {};
@@ -1310,7 +1311,11 @@ app.post('/api/checkout', async (req, res) => {
       const regen = await pool.query(`UPDATE qr_codes SET qr_id=LEFT(MD5(RANDOM()::text || NOW()::text),10) WHERE id=$1 RETURNING qr_id`, [qrInternalId]);
       qrIdFinal = regen.rows[0].qr_id;
     }
-    // Find or create active modern session (schema-flexible with fallbacks)
+  // Establish tenant context for RLS-aware tables
+  try { await pool.query("SELECT set_config('app.current_business_id', $1, true)", [String(businessId)]); } catch(_) {}
+  try { await pool.query("SELECT set_config('app.current_tenant', $1, true)", [String(businessId)]); } catch(_) {}
+
+  // Find or create active modern session (schema-flexible with fallbacks)
     let sessionRow = await pool.query(`SELECT ds.id, ds.payment_status FROM dining_sessions ds WHERE ds.qr_code_id=$1 AND ds.is_active=TRUE ORDER BY ds.id DESC LIMIT 1`, [qrInternalId]);
     let sessionId = sessionRow.rows[0]?.id;
     let sessionPaymentStatus = sessionRow.rows[0]?.payment_status || 'unpaid';
@@ -1350,7 +1355,7 @@ app.post('/api/checkout', async (req, res) => {
         const qty = Number(it.quantity)||0; const price = Number(it.price)||0; total += qty*price;
       }
     }
-    // Insert session_order row
+    // Insert session_order row (modern summary, best-effort)
     let orderId = null;
     let orderPaymentStatus = 'unpaid';
     try {
@@ -1359,55 +1364,97 @@ app.post('/api/checkout', async (req, res) => {
       orderId = insOrder.rows[0].id; orderPaymentStatus = insOrder.rows[0].payment_status;
     } catch(e) { /* schema diff tolerant */ }
 
-    // --- ALSO create legacy Orders + OrderItems so Owner views reflect totals/items ---
-    // Resolve a session UUID compatible with Orders.dining_session_id (modern joins expect dining_sessions.session_id)
-    let sessionUUID = null;
+    // --- Create legacy Orders + OrderItems so Owner views reflect totals/items ---
+    // 1) Ensure legacy QR + legacy DiningSessions (status='active'), reuse if available
+    let legacyQrId = null; let legacySessionId = null;
     try {
-      const r = await pool.query(`SELECT session_id FROM dining_sessions WHERE id=$1 LIMIT 1`, [sessionId]);
-      sessionUUID = r.rows[0]?.session_id || null;
-    } catch(_) { sessionUUID = null; }
-    if (!sessionUUID) {
-      // Assign one if missing (some deployments lack session_id). Best-effort.
-      try {
-        const gen = 'S'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
-        await pool.query(`UPDATE dining_sessions SET session_id=$1 WHERE id=$2`, [gen, sessionId]);
-        sessionUUID = gen;
-      } catch(_) { /* ignore */ }
+      const lqr = await pool.query(`SELECT qr_code_id, current_session_id FROM QRCodes WHERE business_id=$1 AND table_number=$2 LIMIT 1`, [businessId, String(resolvedTable)]);
+      if (lqr.rows[0]) { legacyQrId = lqr.rows[0].qr_code_id; legacySessionId = lqr.rows[0].current_session_id || null; }
+      if (!legacyQrId) {
+        const ins = await pool.query(`INSERT INTO QRCodes (business_id, table_number) VALUES ($1,$2) RETURNING qr_code_id`, [businessId, String(resolvedTable)]);
+        legacyQrId = ins.rows[0].qr_code_id;
+      }
+      if (legacySessionId) {
+        const chk = await pool.query(`SELECT session_id, status FROM DiningSessions WHERE session_id=$1`, [legacySessionId]);
+        if (!chk.rows.length || chk.rows[0].status !== 'active') legacySessionId = null;
+      }
+      if (!legacySessionId) {
+        const dsIns = await pool.query(`INSERT INTO DiningSessions (business_id, qr_code_id, status) VALUES ($1,$2,'active') RETURNING session_id`, [businessId, legacyQrId]);
+        legacySessionId = dsIns.rows[0].session_id;
+        try { await pool.query(`UPDATE QRCodes SET current_session_id=$1 WHERE qr_code_id=$2`, [legacySessionId, legacyQrId]); } catch(_) {}
+      }
+    } catch(eLegacyEnsure) {
+      console.warn('[checkout] legacy ensure failed', eLegacyEnsure.message);
     }
 
+    // 2) Insert legacy Orders row referencing legacySessionId
     let legacyOrderId = null;
     try {
-      if (sessionUUID) {
-        const ord = await pool.query(
-          `INSERT INTO Orders (business_id, dining_session_id, status, customer_prep_time_minutes, payment_status, placed_at, created_at, updated_at)
-           VALUES ($1,$2,$3,15,$4,NOW(),NOW(),NOW()) RETURNING order_id`,
-          [businessId, sessionUUID, (payNow ? 'COMPLETED' : 'PLACED'), (payNow ? 'paid' : 'unpaid')]
-        );
-        legacyOrderId = ord.rows[0]?.order_id || null;
-      }
+      const ord = await pool.query(
+        `INSERT INTO Orders (business_id, dining_session_id, status, customer_prep_time_minutes, payment_status, placed_at, created_at, updated_at)
+         VALUES ($1,$2,$3,15,$4,NOW(),NOW(),NOW()) RETURNING order_id`,
+        [businessId, legacySessionId, (payNow ? 'COMPLETED' : 'PLACED'), (payNow ? 'paid' : 'unpaid')]
+      );
+      legacyOrderId = ord.rows[0]?.order_id || null;
+      // Best-effort update total_amount if column exists
+      try {
+        const col = await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=LOWER('orders') AND column_name='total_amount' LIMIT 1`);
+        if (col.rows.length) {
+          await pool.query(`UPDATE Orders SET total_amount=$1 WHERE order_id=$2`, [total, legacyOrderId]);
+        }
+      } catch(_) {}
     } catch (eOrd) {
       console.warn('[checkout] legacy Orders insert failed:', eOrd.message);
     }
 
+    // 3) Insert OrderItems with dynamic column support (quantity/unit_price/price and item_name/name).
     if (legacyOrderId && Array.isArray(items) && items.length) {
-      for (const it of items) {
-        try {
+      try {
+        // Resolve actual OrderItems table name
+        const tnames = await pool.query(`SELECT table_name FROM information_schema.tables WHERE table_schema='public'`);
+        const present = new Set(tnames.rows.map(r=>String(r.table_name).toLowerCase()));
+        let itemsTable = present.has('order_items') ? 'order_items' : (present.has('orderitems') ? 'orderitems' : 'OrderItems');
+        const colsRes = await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=LOWER($1)`, [itemsTable]);
+        const have = new Set(colsRes.rows.map(r=>String(r.column_name).toLowerCase()));
+        const canQty = have.has('quantity');
+        const canUnitPrice = have.has('unit_price');
+        const canPrice = have.has('price');
+        const nameCol = have.has('item_name') ? 'item_name' : (have.has('name') ? 'name' : null);
+        const hasBiz = have.has('business_id');
+
+        for (const it of items) {
           const qty = Math.max(1, parseInt(it.quantity || 1, 10));
-          const name = (it.name || '').trim();
+          const price = Number(it.price || 0);
+          const nm = (it.name || '').trim() || null;
           const explicitId = it.menuItemId != null ? parseInt(it.menuItemId,10) : (it.id != null ? parseInt(it.id,10) : null);
           let menuId = Number.isFinite(explicitId) ? explicitId : null;
-          if (!menuId && name) {
-            const m = await pool.query(`SELECT menu_item_id FROM MenuItems WHERE business_id=$1 AND LOWER(name)=LOWER($2) LIMIT 1`, [businessId, name]);
-            if (m.rows[0]) menuId = m.rows[0].menu_item_id;
+          if (!menuId && nm) {
+            try {
+              const m = await pool.query(`SELECT menu_item_id FROM MenuItems WHERE business_id=$1 AND LOWER(name)=LOWER($2) LIMIT 1`, [businessId, nm]);
+              if (m.rows[0]) menuId = m.rows[0].menu_item_id;
+            } catch(_) { /* ignore lookup failures */ }
           }
-          if (!menuId) { continue; } // skip if we cannot resolve a menu item
-          for (let i=0;i<qty;i++) {
-            await pool.query(`INSERT INTO OrderItems (order_id, menu_item_id, item_status, business_id, created_at, updated_at)
-                              VALUES ($1,$2,'QUEUED',$3,NOW(),NOW())`, [legacyOrderId, menuId, businessId]);
+          const cols = ['order_id'];
+          const vals = [legacyOrderId];
+          if (hasBiz) { cols.push('business_id'); vals.push(businessId); }
+          if (nameCol && nm!=null) { cols.push(nameCol); vals.push(nm); }
+          if (canQty) { cols.push('quantity'); vals.push(qty); }
+          if (canUnitPrice) { cols.push('unit_price'); vals.push(price); }
+          else if (canPrice) { cols.push('price'); vals.push(price); }
+          if (have.has('item_status')) { cols.push('item_status'); vals.push('QUEUED'); }
+          if (menuId && have.has('menu_item_id')) { cols.push('menu_item_id'); vals.push(menuId); }
+          if (have.has('created_at')) { cols.push('created_at'); vals.push(new Date()); }
+          if (have.has('updated_at')) { cols.push('updated_at'); vals.push(new Date()); }
+          const placeholders = vals.map((_,i)=>`$${i+1}`).join(',');
+          const colSql = cols.map(c=>`"${c}"`).join(',');
+          try {
+            await pool.query(`INSERT INTO ${itemsTable} (${colSql}) VALUES (${placeholders})`, vals);
+          } catch (insErr) {
+            console.warn('[checkout] OrderItems insert failed (soft):', insErr.message);
           }
-        } catch (iErr) {
-          console.warn('[checkout] OrderItems insert failed (non-fatal):', iErr.message);
         }
+      } catch (itemsErr) {
+        console.warn('[checkout] OrderItems dynamic path failed:', itemsErr.message);
       }
     }
 
