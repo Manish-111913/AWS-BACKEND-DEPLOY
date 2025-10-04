@@ -335,7 +335,7 @@ app.get('/api/sessions/overview', async (req, res) => {
     if (!businessId) return res.status(400).json({ error: 'businessId required' });
     const mode = String(req.query.mode || 'eat_later').toLowerCase();
 
-    const { rows } = await pool.query(`
+  const { rows } = await pool.query(`
       /* Unified legacy + modern QR/session overview with order/payment aggregation */
       WITH legacy AS (
         SELECT q.qr_code_id::int AS qr_code_id,
@@ -432,8 +432,7 @@ app.get('/api/sessions/overview', async (req, res) => {
                WHEN d.session_id>0 THEN COALESCE((SELECT legacy_all_paid FROM legacy_agg la WHERE la.legacy_session_id=d.session_id),FALSE)
                WHEN d.session_id<0 THEN COALESCE((SELECT (ds.payment_status='paid') FROM dining_sessions ds WHERE ds.id=(-d.session_id)),FALSE)
                ELSE FALSE END AS all_paid,
-            d.modern_payment_status,
-            0 AS total_amount
+            d.modern_payment_status
       FROM dedup d
       ORDER BY (
         CASE WHEN d.table_number ~ '^\\d+$' THEN d.table_number::int ELSE NULL END
@@ -471,6 +470,65 @@ app.get('/api/sessions/overview', async (req, res) => {
       while(numericKeys.length && numericKeys[numericKeys.length-1]>onboardingClamp) numericKeys.pop();
     }
 
+    // --- Compute totals for both legacy and modern sessions ---
+    const legacySessionIds = rows.filter(r => r.session_id && Number(r.session_id) > 0).map(r => Number(r.session_id));
+    const modernSessionIds = rows.filter(r => r.session_id && Number(r.session_id) < 0).map(r => Math.abs(Number(r.session_id)));
+
+    // Legacy totals: prefer Orders.total_amount; fallback to SUM(OrderItems.quantity * unit_price) or * price
+    const totalsLegacy = new Map();
+    if (legacySessionIds.length) {
+      // Try total_amount
+      try {
+        const q1 = await pool.query(
+          `SELECT o.dining_session_id AS sid, COALESCE(SUM(o.total_amount),0)::numeric AS total
+             FROM Orders o
+            WHERE o.dining_session_id = ANY($1::bigint[])
+            GROUP BY o.dining_session_id`, [legacySessionIds]
+        );
+        for (const r of q1.rows) totalsLegacy.set(Number(r.sid), Number(r.total));
+      } catch(_ignore1) {
+        // Fallback to unit_price
+        try {
+          const q2 = await pool.query(
+            `SELECT o.dining_session_id AS sid,
+                    COALESCE(SUM(COALESCE(oi.quantity,1) * COALESCE(oi.unit_price,0)),0)::numeric AS total
+               FROM Orders o
+               JOIN OrderItems oi ON oi.order_id = o.order_id
+              WHERE o.dining_session_id = ANY($1::bigint[])
+              GROUP BY o.dining_session_id`, [legacySessionIds]
+          );
+          for (const r of q2.rows) totalsLegacy.set(Number(r.sid), Number(r.total));
+        } catch(_ignore2) {
+          // Fallback to price
+          try {
+            const q3 = await pool.query(
+              `SELECT o.dining_session_id AS sid,
+                      COALESCE(SUM(COALESCE(oi.quantity,1) * COALESCE(oi.price,0)),0)::numeric AS total
+                 FROM Orders o
+                 JOIN OrderItems oi ON oi.order_id = o.order_id
+                WHERE o.dining_session_id = ANY($1::bigint[])
+                GROUP BY o.dining_session_id`, [legacySessionIds]
+            );
+            for (const r of q3.rows) totalsLegacy.set(Number(r.sid), Number(r.total));
+          } catch(_ignore3) { /* leave totalsLegacy empty if all fail */ }
+        }
+      }
+    }
+
+    // Modern totals from session_orders if present
+    const totalsModern = new Map();
+    if (modernSessionIds.length) {
+      try {
+        const qM = await pool.query(
+          `SELECT so.session_id AS sid, COALESCE(SUM(so.total_amount),0)::numeric AS total
+             FROM session_orders so
+            WHERE so.session_id = ANY($1::bigint[])
+            GROUP BY so.session_id`, [modernSessionIds]
+        );
+        for (const r of qM.rows) totalsModern.set(Number(r.sid), Number(r.total));
+      } catch(_ignoreM) { /* session_orders may not exist */ }
+    }
+
     const output = [];
     for (let t=1; t<=desiredTotal; t++) {
       const row = numericMap.get(t);
@@ -478,12 +536,20 @@ app.get('/api/sessions/overview', async (req, res) => {
         output.push({
           qr_code_id:null, table_number:String(t), session_id:null, session_status:null,
           orders_count:0, unpaid_exists:false, any_ready_order:false, any_item_completed:false,
-          all_paid:false, modern_payment_status:null, color:'ash', mode_applied:mode, reason:'no active session'
+          all_paid:false, modern_payment_status:null, color:'ash', mode_applied:mode, reason:'no active session',
+          total_amount: 0
         });
         continue;
       }
       const hasActive = (row.session_id && (row.session_is_active === true || Number(row.session_id)<0));
       const anyReady = row.any_ready_order || row.any_item_completed;
+      // Resolve total amount for this session/table
+      let totalAmount = 0;
+      if (row.session_id) {
+        const sidNum = Number(row.session_id);
+        if (sidNum > 0) totalAmount = totalsLegacy.get(sidNum) || 0;
+        else if (sidNum < 0) totalAmount = totalsModern.get(Math.abs(sidNum)) || 0;
+      }
       let color = 'ash';
       let reason = 'no active session';
       if (hasActive) {
@@ -511,7 +577,7 @@ app.get('/api/sessions/overview', async (req, res) => {
         all_paid: row.all_paid,
         modern_payment_status: row.modern_payment_status || null,
         color,
-        total_amount: 0,
+        total_amount: totalAmount,
         mode_applied: mode,
         reason
       });
