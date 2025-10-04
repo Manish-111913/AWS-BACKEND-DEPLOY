@@ -38,7 +38,17 @@ function writeTempInput(text) {
 async function runPythonParser(rawText, options = {}) {
   const start = Date.now();
   const timeoutMs = options.timeoutMs || 10000; // 10s default
-  const pythonPath = options.pythonPath || process.env.PYTHON_PATH || 'python';
+  // Try multiple Python executable names and paths
+  const possiblePythonPaths = [
+    options.pythonPath,
+    process.env.PYTHON_PATH,
+    '/usr/bin/python3',
+    '/usr/bin/python',
+    'python3',
+    'python',
+    'py'
+  ].filter(Boolean);
+  const pythonPath = possiblePythonPaths[0] || 'python';
   try {
     ensurePythonScriptExists();
   } catch (e) {

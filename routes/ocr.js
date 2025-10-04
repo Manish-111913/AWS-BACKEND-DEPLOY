@@ -401,6 +401,12 @@ Thank you for shopping!`;
     } else {
       try {
         console.log('🔄 Python-Gemini parser failed, falling back to JavaScript parser...');
+        
+        // Check if this is a deployment environment issue (Python not available)
+        if (parserError && (parserError.includes('ENOENT') || parserError.includes('spawn py'))) {
+          console.log('ℹ️  Detected deployment environment - Python not available. Using enhanced JavaScript fallback.');
+        }
+        
         const fallback = await ocrService.parseReceiptText(rawText || '');
         items = fallback || [];
         parsedBy = 'fallback-js';
